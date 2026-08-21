@@ -1,6 +1,6 @@
 # MPDM Local Monitor
 
-Runs real MPDM PROD, MPDM DEV, and InReality Platform V3 login checks on a local Mac. A single long-lived Chromium process is reused, and checks run sequentially to reduce startup time and memory usage.
+Runs real MPDM PROD, MPDM DEV, InReality Platform V3, and InReality Platform V3 DEV login checks on a local Mac. A single long-lived Chromium process is reused, and checks run sequentially to reduce startup time and memory usage.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ npx playwright install chromium
 cp .env.example .env
 ```
 
-Edit `.env` with the MPDM PROD, MPDM DEV, and InReality V3 credentials and a long random `MONITOR_TOKEN`, then test:
+Edit `.env` with the MPDM PROD, MPDM DEV, InReality V3 PROD, and InReality V3 DEV credentials and a long random `MONITOR_TOKEN`, then test:
 
 ```bash
 node --env-file=.env src/index.js
@@ -42,11 +42,11 @@ curl -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8787/health/all
 curl -X POST -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8787/run/all
 ```
 
-- `GET /health/prod`, `/health/dev`, `/health/app`, `/health/all`: return the latest cached result immediately.
-- `POST /run/prod`, `/run/dev`, `/run/app`, `/run/all`: run a fresh check and return its result.
+- `GET /health/prod`, `/health/dev`, `/health/app`, `/health/app-dev`, `/health/all`: return the latest cached result immediately.
+- `POST /run/prod`, `/run/dev`, `/run/app`, `/run/app-dev`, `/run/all`: run a fresh check and return its result.
 - `POST /notify/test`: send a test message to the configured Slack webhook.
 
-All checks are queued instead of running Chromium sessions concurrently. InReality V3 uses its username, Continue, password, Continue login flow and only succeeds after reaching `https://app.inreality.com/v3/auth0/`.
+All checks are queued instead of running Chromium sessions concurrently. Both InReality V3 environments use the username, Continue, password, Continue login flow. PROD only succeeds at `https://app.inreality.com/v3/auth0/`; DEV only succeeds at `https://v3-dev.inreality.com/v3/auth0/`. OAuth query parameters are removed from all returned URLs.
 
 Test Slack after restarting the service:
 
