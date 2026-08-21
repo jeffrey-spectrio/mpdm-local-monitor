@@ -1,5 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
+import { dirname } from "node:path";
 import { chromium } from "playwright";
 
 const JSON_HEADERS = {
@@ -15,6 +17,12 @@ const config = {
     Number.parseFloat(process.env.CHECK_INTERVAL_MINUTES || "15") * 60_000,
   checkOnStart: process.env.CHECK_ON_START !== "false",
   headless: process.env.HEADLESS !== "false",
+  failureNotificationThreshold: Number.parseInt(
+    process.env.FAILURE_NOTIFICATION_THRESHOLD || "2",
+    10,
+  ),
+  slackWebhookUrl: process.env.SLACK_WEBHOOK_URL || "",
+  alertStatePath: process.env.ALERT_STATE_PATH || "data/alert-state.json",
 };
 
 const monitors = {
@@ -33,6 +41,10 @@ const monitors = {
 let browser;
 let checkQueue = Promise.resolve();
 const latest = { prod: null, dev: null };
+let alertState = {
+  prod: { consecutiveFailures: 0, alertSent: false },
+  dev: { consecutiveFailures: 0, alertSent: false },
+};
 
 function elapsedSince(startedAt) {
   return Date.now() - startedAt;
@@ -75,6 +87,84 @@ function validateConfig() {
   if (!Number.isFinite(config.intervalMs) || config.intervalMs < 60_000) {
     throw new Error("CHECK_INTERVAL_MINUTES must be at least 1");
   }
+  if (
+    !Number.isInteger(config.failureNotificationThreshold) ||
+    config.failureNotificationThreshold < 1
+  ) {
+    throw new Error("FAILURE_NOTIFICATION_THRESHOLD must be at least 1");
+  }
+  if (config.slackWebhookUrl && !config.slackWebhookUrl.startsWith("https://")) {
+    throw new Error("SLACK_WEBHOOK_URL must use HTTPS");
+  }
+}
+
+async function loadAlertState() {
+  try {
+    const stored = JSON.parse(await readFile(config.alertStatePath, "utf8"));
+    for (const name of Object.keys(alertState)) {
+      if (stored[name]) alertState[name] = stored[name];
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") log("alert_state_load_failed", { reason: error.message });
+  }
+}
+
+async function saveAlertState() {
+  await mkdir(dirname(config.alertStatePath), { recursive: true });
+  await writeFile(config.alertStatePath, `${JSON.stringify(alertState, null, 2)}\n`);
+}
+
+async function sendSlack(text) {
+  if (!config.slackWebhookUrl) {
+    log("slack_notification_skipped", { reason: "SLACK_WEBHOOK_URL is not configured" });
+    return false;
+  }
+
+  try {
+    const response = await fetch(config.slackWebhookUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`Slack returned HTTP ${response.status}`);
+    log("slack_notification_sent");
+    return true;
+  } catch (error) {
+    log("slack_notification_failed", { reason: error.message });
+    return false;
+  }
+}
+
+async function updateAlertState(name, result) {
+  const state = alertState[name];
+  if (result.ok) {
+    if (state.alertSent) {
+      const sent = await sendSlack(
+        `:white_check_mark: MPDM ${name.toUpperCase()} recovered\n` +
+          `Login succeeded in ${result.durationMs} ms\n${result.finalUrl}`,
+      );
+      if (sent) state.alertSent = false;
+    }
+    state.consecutiveFailures = 0;
+  } else {
+    state.consecutiveFailures += 1;
+    if (
+      state.consecutiveFailures >= config.failureNotificationThreshold &&
+      !state.alertSent
+    ) {
+      const sent = await sendSlack(
+        `:rotating_light: MPDM ${name.toUpperCase()} login check failed ` +
+          `${state.consecutiveFailures} times consecutively\n` +
+          `Reason: ${result.reason || result.status}\n` +
+          `Checked: ${result.checkedAt}`,
+      );
+      if (sent) state.alertSent = true;
+    }
+  }
+  await saveAlertState().catch((error) => {
+    log("alert_state_save_failed", { reason: error.message });
+  });
 }
 
 async function getBrowser() {
@@ -166,7 +256,10 @@ async function runChecks(targetNames, source) {
   const task = async () => {
     const startedAt = Date.now();
     const checks = {};
-    for (const name of targetNames) checks[name] = await checkSite(name, source);
+    for (const name of targetNames) {
+      checks[name] = await checkSite(name, source);
+      await updateAlertState(name, checks[name]);
+    }
     const ok = targetNames.every((name) => checks[name].ok);
     return {
       ok,
@@ -225,9 +318,23 @@ async function handleRequest(request, response) {
       service: "mpdm-local-monitor",
       endpoints: ["/health/prod", "/health/dev", "/health/all"],
       refreshEndpoints: ["POST /run/prod", "POST /run/dev", "POST /run/all"],
+      notificationTestEndpoint: "POST /notify/test",
       authentication: "Authorization: Bearer <MONITOR_TOKEN>",
       intervalMinutes: config.intervalMs / 60_000,
+      failureNotificationThreshold: config.failureNotificationThreshold,
     });
+  }
+  if (requestUrl.pathname === "/notify/test") {
+    if (request.method !== "POST") return sendJson(response, { error: "Use POST" }, 405);
+    if (!tokenMatches(bearerToken(request), config.token)) {
+      return sendJson(response, { error: "Unauthorized" }, 401);
+    }
+    const sent = await sendSlack(":test_tube: MPDM Local Monitor Slack notification test succeeded.");
+    return sendJson(
+      response,
+      { ok: sent, status: sent ? "notification_sent" : "notification_failed" },
+      sent ? 200 : 502,
+    );
   }
   const targetNames = targetsByPath[requestUrl.pathname];
   if (!targetNames) return sendJson(response, { error: "Not found" }, 404);
@@ -250,6 +357,7 @@ async function shutdown(signal) {
 }
 
 validateConfig();
+await loadAlertState();
 const server = createServer((request, response) => {
   handleRequest(request, response).catch((error) => {
     log("request_failed", { reason: error.message });

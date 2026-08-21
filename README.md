@@ -24,6 +24,15 @@ node --env-file=.env src/index.js
 
 The service listens on `127.0.0.1:8787` by default. Checks run at startup and every 15 minutes.
 
+To receive Slack alerts, create a Slack incoming webhook and set it in `.env`:
+
+```dotenv
+FAILURE_NOTIFICATION_THRESHOLD=2
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+```
+
+Each environment is counted independently. An alert is sent after two consecutive failures, only once for the same incident. A recovery message is sent when that environment succeeds again. Alert counters survive service restarts.
+
 ## Endpoints
 
 All monitor endpoints require `Authorization: Bearer <MONITOR_TOKEN>`.
@@ -35,8 +44,15 @@ curl -X POST -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8787/run
 
 - `GET /health/prod`, `/health/dev`, `/health/all`: return the latest cached result immediately.
 - `POST /run/prod`, `/run/dev`, `/run/all`: run a fresh check and return its result.
+- `POST /notify/test`: send a test message to the configured Slack webhook.
 
 PROD and DEV checks are always queued instead of running Chromium sessions concurrently.
+
+Test Slack after restarting the service:
+
+```bash
+curl -X POST -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8787/notify/test
+```
 
 ## Start automatically on macOS
 
