@@ -27,24 +27,42 @@ const config = {
 
 const monitors = {
   prod: {
+    service: "mpdm-prod",
+    label: "MPDM PROD",
+    flow: "mpdm",
     email: process.env.MPDM_EMAIL,
     password: process.env.MPDM_PASSWORD,
     url: process.env.MPDM_URL || "https://devicemanager.spectrio.com/mpdm/",
   },
   dev: {
+    service: "mpdm-dev",
+    label: "MPDM DEV",
+    flow: "mpdm",
     email: process.env.MPDM_DEV_EMAIL,
     password: process.env.MPDM_DEV_PASSWORD,
     url: process.env.MPDM_DEV_URL || "https://mpdm-dev.inreality.com/mpdm/",
+  },
+  app: {
+    service: "inreality-v3",
+    label: "InReality V3",
+    flow: "two-step",
+    email: process.env.INREALITY_EMAIL,
+    password: process.env.INREALITY_PASSWORD,
+    url: process.env.INREALITY_URL || "https://app.inreality.com/v3/",
+    successUrl:
+      process.env.INREALITY_SUCCESS_URL || "https://app.inreality.com/v3/auth0/",
   },
 };
 
 let browser;
 let checkQueue = Promise.resolve();
-const latest = { prod: null, dev: null };
-let alertState = {
-  prod: { consecutiveFailures: 0, alertSent: false },
-  dev: { consecutiveFailures: 0, alertSent: false },
-};
+const latest = Object.fromEntries(Object.keys(monitors).map((name) => [name, null]));
+let alertState = Object.fromEntries(
+  Object.keys(monitors).map((name) => [
+    name,
+    { consecutiveFailures: 0, alertSent: false },
+  ]),
+);
 
 function elapsedSince(startedAt) {
   return Date.now() - startedAt;
@@ -141,7 +159,7 @@ async function updateAlertState(name, result) {
   if (result.ok) {
     if (state.alertSent) {
       const sent = await sendSlack(
-        `:white_check_mark: MPDM ${name.toUpperCase()} recovered\n` +
+        `:white_check_mark: ${monitors[name].label} recovered\n` +
           `Login succeeded in ${result.durationMs} ms\n${result.finalUrl}`,
       );
       if (sent) state.alertSent = false;
@@ -154,7 +172,7 @@ async function updateAlertState(name, result) {
       !state.alertSent
     ) {
       const sent = await sendSlack(
-        `:rotating_light: MPDM ${name.toUpperCase()} login check failed ` +
+        `:rotating_light: ${monitors[name].label} login check failed ` +
           `${state.consecutiveFailures} times consecutively\n` +
           `Reason: ${result.reason || result.status}\n` +
           `Checked: ${result.checkedAt}`,
@@ -176,6 +194,51 @@ async function getBrowser() {
   return browser;
 }
 
+async function completeMpdmLogin(page, monitor, timings) {
+  const targetUrl = new URL(monitor.url);
+  const successPath = `${targetUrl.pathname.replace(/\/$/, "")}/devices`;
+  const emailInput = page.locator('input[type="email"]');
+  await emailInput.waitFor({ state: "visible", timeout: 20_000 });
+
+  const formFillStartedAt = Date.now();
+  await emailInput.fill(monitor.email);
+  await page.locator('input[type="password"]').fill(monitor.password);
+  timings.formFillMs = elapsedSince(formFillStartedAt);
+
+  const loginStartedAt = Date.now();
+  await page.locator("button.login-submit").click();
+  await page.waitForURL((url) => url.pathname === successPath, {
+    timeout: 30_000,
+    waitUntil: "domcontentloaded",
+  });
+  timings.loginSubmitMs = elapsedSince(loginStartedAt);
+}
+
+async function completeTwoStepLogin(page, monitor, timings) {
+  const usernameStartedAt = Date.now();
+  const usernameInput = page.locator(
+    '#username, input[name="username"], input[autocomplete="email"]',
+  ).first();
+  await usernameInput.waitFor({ state: "visible", timeout: 20_000 });
+  await usernameInput.fill(monitor.email);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+  timings.usernameStepMs = elapsedSince(usernameStartedAt);
+
+  const passwordStartedAt = Date.now();
+  const passwordInput = page.locator('input[type="password"]');
+  await passwordInput.waitFor({ state: "visible", timeout: 20_000 });
+  await passwordInput.fill(monitor.password);
+  await page.getByRole("button", { name: "Continue", exact: true }).click();
+
+  const successUrl = new URL(monitor.successUrl);
+  await page.waitForURL(
+    (url) =>
+      url.origin === successUrl.origin && url.pathname === successUrl.pathname,
+    { timeout: 45_000, waitUntil: "domcontentloaded" },
+  );
+  timings.passwordStepMs = elapsedSince(passwordStartedAt);
+}
+
 async function checkSite(name, source) {
   const startedAt = Date.now();
   const timings = {};
@@ -190,35 +253,23 @@ async function checkSite(name, source) {
     page = await context.newPage();
     timings.pageSetupMs = elapsedSince(setupStartedAt);
 
-    const targetUrl = new URL(monitor.url);
-    const successPath = `${targetUrl.pathname.replace(/\/$/, "")}/devices`;
-
     const pageLoadStartedAt = Date.now();
-    await page.goto(targetUrl.href, {
+    await page.goto(monitor.url, {
       timeout: 30_000,
       waitUntil: "domcontentloaded",
     });
-    const emailInput = page.locator('input[type="email"]');
-    await emailInput.waitFor({ state: "visible", timeout: 20_000 });
     timings.loginPageLoadMs = elapsedSince(pageLoadStartedAt);
 
-    const formFillStartedAt = Date.now();
-    await emailInput.fill(monitor.email);
-    await page.locator('input[type="password"]').fill(monitor.password);
-    timings.formFillMs = elapsedSince(formFillStartedAt);
-
-    const loginStartedAt = Date.now();
-    await page.locator("button.login-submit").click();
-    await page.waitForURL(
-      (url) => url.pathname === successPath,
-      { timeout: 30_000, waitUntil: "domcontentloaded" },
-    );
-    timings.loginSubmitMs = elapsedSince(loginStartedAt);
+    if (monitor.flow === "two-step") {
+      await completeTwoStepLogin(page, monitor, timings);
+    } else {
+      await completeMpdmLogin(page, monitor, timings);
+    }
     timings.totalMs = elapsedSince(startedAt);
 
     const result = {
       ok: true,
-      service: `mpdm-${name}`,
+      service: monitor.service,
       status: "login_succeeded",
       source,
       checkedAt: new Date().toISOString(),
@@ -233,7 +284,7 @@ async function checkSite(name, source) {
     timings.totalMs = elapsedSince(startedAt);
     const result = {
       ok: false,
-      service: `mpdm-${name}`,
+      service: monitor.service,
       status: "login_failed",
       source,
       checkedAt: new Date().toISOString(),
@@ -263,7 +314,7 @@ async function runChecks(targetNames, source) {
     const ok = targetNames.every((name) => checks[name].ok);
     return {
       ok,
-      service: targetNames.length === 1 ? `mpdm-${targetNames[0]}` : "mpdm-all",
+      service: targetNames.length === 1 ? monitors[targetNames[0]].service : "monitor-all",
       status: ok ? "all_logins_succeeded" : "one_or_more_logins_failed",
       source,
       checkedAt: new Date().toISOString(),
@@ -281,7 +332,7 @@ function healthResult(targetNames) {
   if (targetNames.length === 1) {
     return latest[targetNames[0]] || {
       ok: false,
-      service: `mpdm-${targetNames[0]}`,
+      service: monitors[targetNames[0]].service,
       status: "not_checked_yet",
     };
   }
@@ -290,7 +341,7 @@ function healthResult(targetNames) {
   const ok = ready && targetNames.every((name) => checks[name].ok);
   return {
     ok,
-    service: "mpdm-all",
+    service: "monitor-all",
     status: ready ? (ok ? "all_logins_succeeded" : "one_or_more_logins_failed") : "not_checked_yet",
     checkedAt: new Date().toISOString(),
     checks,
@@ -301,10 +352,12 @@ const targetsByPath = {
   "/health": ["prod"],
   "/health/prod": ["prod"],
   "/health/dev": ["dev"],
-  "/health/all": ["prod", "dev"],
+  "/health/app": ["app"],
+  "/health/all": ["prod", "dev", "app"],
   "/run/prod": ["prod"],
   "/run/dev": ["dev"],
-  "/run/all": ["prod", "dev"],
+  "/run/app": ["app"],
+  "/run/all": ["prod", "dev", "app"],
 };
 
 async function handleRequest(request, response) {
@@ -316,8 +369,13 @@ async function handleRequest(request, response) {
   if (requestUrl.pathname === "/") {
     return sendJson(response, {
       service: "mpdm-local-monitor",
-      endpoints: ["/health/prod", "/health/dev", "/health/all"],
-      refreshEndpoints: ["POST /run/prod", "POST /run/dev", "POST /run/all"],
+      endpoints: ["/health/prod", "/health/dev", "/health/app", "/health/all"],
+      refreshEndpoints: [
+        "POST /run/prod",
+        "POST /run/dev",
+        "POST /run/app",
+        "POST /run/all",
+      ],
       notificationTestEndpoint: "POST /notify/test",
       authentication: "Authorization: Bearer <MONITOR_TOKEN>",
       intervalMinutes: config.intervalMs / 60_000,
@@ -370,9 +428,10 @@ server.listen(config.port, config.host, () => {
   log("server_started", { host: config.host, port: config.port });
 });
 
-if (config.checkOnStart) runChecks(["prod", "dev"], "startup").catch((error) => log("startup_check_failed", { reason: error.message }));
+const allTargets = Object.keys(monitors);
+if (config.checkOnStart) runChecks(allTargets, "startup").catch((error) => log("startup_check_failed", { reason: error.message }));
 setInterval(() => {
-  runChecks(["prod", "dev"], "schedule").catch((error) => log("scheduled_check_failed", { reason: error.message }));
+  runChecks(allTargets, "schedule").catch((error) => log("scheduled_check_failed", { reason: error.message }));
 }, config.intervalMs).unref();
 
 process.on("SIGINT", () => shutdown("SIGINT"));

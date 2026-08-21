@@ -1,6 +1,6 @@
 # MPDM Local Monitor
 
-Runs real PROD and DEV MPDM login checks on a local Mac. A single long-lived Chromium process is reused, and checks run sequentially to reduce startup time and memory usage.
+Runs real MPDM PROD, MPDM DEV, and InReality Platform V3 login checks on a local Mac. A single long-lived Chromium process is reused, and checks run sequentially to reduce startup time and memory usage.
 
 ## Requirements
 
@@ -16,7 +16,7 @@ npx playwright install chromium
 cp .env.example .env
 ```
 
-Edit `.env` with the PROD and DEV credentials and a long random `MONITOR_TOKEN`, then test:
+Edit `.env` with the MPDM PROD, MPDM DEV, and InReality V3 credentials and a long random `MONITOR_TOKEN`, then test:
 
 ```bash
 node --env-file=.env src/index.js
@@ -31,7 +31,7 @@ FAILURE_NOTIFICATION_THRESHOLD=2
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 ```
 
-Each environment is counted independently. An alert is sent after two consecutive failures, only once for the same incident. A recovery message is sent when that environment succeeds again. Alert counters survive service restarts.
+Each site is counted independently. An alert is sent after two consecutive failures, only once for the same incident. A recovery message is sent when that site succeeds again. Alert counters survive service restarts.
 
 ## Endpoints
 
@@ -42,11 +42,11 @@ curl -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8787/health/all
 curl -X POST -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8787/run/all
 ```
 
-- `GET /health/prod`, `/health/dev`, `/health/all`: return the latest cached result immediately.
-- `POST /run/prod`, `/run/dev`, `/run/all`: run a fresh check and return its result.
+- `GET /health/prod`, `/health/dev`, `/health/app`, `/health/all`: return the latest cached result immediately.
+- `POST /run/prod`, `/run/dev`, `/run/app`, `/run/all`: run a fresh check and return its result.
 - `POST /notify/test`: send a test message to the configured Slack webhook.
 
-PROD and DEV checks are always queued instead of running Chromium sessions concurrently.
+All checks are queued instead of running Chromium sessions concurrently. InReality V3 uses its username, Continue, password, Continue login flow and only succeeds after reaching `https://app.inreality.com/v3/auth0/`.
 
 Test Slack after restarting the service:
 
