@@ -52,6 +52,17 @@ const monitors = {
     successUrl:
       process.env.INREALITY_SUCCESS_URL || "https://app.inreality.com/v3/auth0/",
   },
+  appDev: {
+    service: "inreality-v3-dev",
+    label: "InReality V3 DEV",
+    flow: "two-step",
+    email: process.env.INREALITY_DEV_EMAIL,
+    password: process.env.INREALITY_DEV_PASSWORD,
+    url: process.env.INREALITY_DEV_URL || "https://v3-dev.inreality.com/v3/",
+    successUrl:
+      process.env.INREALITY_DEV_SUCCESS_URL ||
+      "https://v3-dev.inreality.com/v3/auth0/",
+  },
 };
 
 let browser;
@@ -66,6 +77,17 @@ let alertState = Object.fromEntries(
 
 function elapsedSince(startedAt) {
   return Date.now() - startedAt;
+}
+
+function sanitizedUrl(value) {
+  try {
+    const url = new URL(value);
+    url.search = "";
+    url.hash = "";
+    return url.href;
+  } catch {
+    return undefined;
+  }
 }
 
 function log(event, details = {}) {
@@ -275,7 +297,7 @@ async function checkSite(name, source) {
       checkedAt: new Date().toISOString(),
       durationMs: timings.totalMs,
       timings,
-      finalUrl: page.url(),
+      finalUrl: sanitizedUrl(page.url()),
     };
     latest[name] = result;
     log("login_check_completed", { target: name, ok: true, durationMs: result.durationMs });
@@ -291,7 +313,9 @@ async function checkSite(name, source) {
       durationMs: timings.totalMs,
       timings,
       reason: error instanceof Error ? error.message : String(error),
-      ...(page ? { finalUrl: page.url() } : {}),
+      ...(page && sanitizedUrl(page.url())
+        ? { finalUrl: sanitizedUrl(page.url()) }
+        : {}),
     };
     latest[name] = result;
     log("login_check_completed", { target: name, ok: false, reason: result.reason });
@@ -353,11 +377,13 @@ const targetsByPath = {
   "/health/prod": ["prod"],
   "/health/dev": ["dev"],
   "/health/app": ["app"],
-  "/health/all": ["prod", "dev", "app"],
+  "/health/app-dev": ["appDev"],
+  "/health/all": ["prod", "dev", "app", "appDev"],
   "/run/prod": ["prod"],
   "/run/dev": ["dev"],
   "/run/app": ["app"],
-  "/run/all": ["prod", "dev", "app"],
+  "/run/app-dev": ["appDev"],
+  "/run/all": ["prod", "dev", "app", "appDev"],
 };
 
 async function handleRequest(request, response) {
@@ -369,11 +395,18 @@ async function handleRequest(request, response) {
   if (requestUrl.pathname === "/") {
     return sendJson(response, {
       service: "mpdm-local-monitor",
-      endpoints: ["/health/prod", "/health/dev", "/health/app", "/health/all"],
+      endpoints: [
+        "/health/prod",
+        "/health/dev",
+        "/health/app",
+        "/health/app-dev",
+        "/health/all",
+      ],
       refreshEndpoints: [
         "POST /run/prod",
         "POST /run/dev",
         "POST /run/app",
+        "POST /run/app-dev",
         "POST /run/all",
       ],
       notificationTestEndpoint: "POST /notify/test",
