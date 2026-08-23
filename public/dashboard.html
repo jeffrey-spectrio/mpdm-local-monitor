@@ -22,19 +22,20 @@
     .seg{display:inline-flex;background:rgba(118,118,128,.12);padding:3px;border-radius:12px;gap:3px;margin-bottom:22px}
     .seg button{border:0;background:transparent;color:#6e6e73;min-height:36px;padding:0 16px;border-radius:9px;font-weight:650;cursor:pointer}
     .seg button.active{background:#fff;color:#1d1d1f;box-shadow:0 1px 5px rgba(0,0,0,.1)}
-    .hero-grid{display:grid;grid-template-columns:1.28fr .72fr;gap:18px;margin-bottom:18px}
-    .glass,.card,.history{background:rgba(255,255,255,.88);border:1px solid rgba(0,0,0,.06);box-shadow:0 10px 35px rgba(0,0,0,.05);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+    .hero-grid{display:grid;grid-template-columns:1.35fr .65fr;gap:18px;margin-bottom:18px}
+    .glass,.card,.history{background:rgba(255,255,255,.9);border:1px solid rgba(0,0,0,.06);box-shadow:0 10px 35px rgba(0,0,0,.05);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
     .glass{border-radius:24px;padding:24px}
+    .glass.attention{background:#fff8f4;border-color:#ffe0cc}
     .eyebrow{font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.09em;color:#86868b;margin-bottom:10px}
     .overall{display:flex;align-items:center;gap:14px;margin-bottom:20px}
     .ring{width:56px;height:56px;border-radius:50%;display:grid;place-items:center;background:rgba(52,199,89,.12);color:#2eae4f;font-size:26px;font-weight:800;flex:none}
-    .ring.bad{background:rgba(255,59,48,.1);color:#ff3b30}
+    .ring.bad{background:rgba(255,149,0,.12);color:#d97706}
     .overall strong{font-size:25px;letter-spacing:-.025em}
     .overall small{display:block;color:#6e6e73;margin-top:4px;font-size:13px}
-    .metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
-    .metric{background:#f5f5f7;border-radius:16px;padding:14px}
+    .metrics{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+    .metric{background:#f5f5f7;border-radius:16px;padding:14px;min-width:0}
     .metric span{display:block;color:#86868b;font-size:12px;margin-bottom:5px}
-    .metric b{font-size:17px;letter-spacing:-.015em}
+    .metric b{font-size:17px;letter-spacing:-.015em;white-space:nowrap}
     .proxy-main{font-size:27px;font-weight:740;letter-spacing:-.03em;margin:2px 0 4px}
     .mono{font:13px ui-monospace,SFMono-Regular,Menlo,monospace;color:#6e6e73;word-break:break-all}
     .next{margin-top:28px;padding-top:16px;border-top:1px solid #e5e5ea;display:flex;justify-content:space-between;gap:12px;font-size:13px}
@@ -44,7 +45,8 @@
     .section-head span{font-size:12px;color:#86868b;text-align:right}
     .service-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
     .service-grid.proxy{grid-template-columns:repeat(2,1fr)}
-    .card{border-radius:20px;padding:17px 17px 15px;min-width:0}
+    .card{border-radius:20px;padding:17px 17px 15px;min-width:0;transition:background .2s ease,border-color .2s ease}
+    .card.fail-card{background:#fff5f4;border-color:#ffd5d1}
     .service-top{display:flex;align-items:flex-start;justify-content:space-between;gap:9px}
     .service-name{font-size:14px;font-weight:680;line-height:1.25;min-width:0}
     .badge{font-size:11px;font-weight:800;padding:5px 8px;border-radius:999px;white-space:nowrap;background:rgba(52,199,89,.12);color:#279a45}
@@ -54,7 +56,7 @@
     .duration small{font-size:13px;font-weight:500;color:#86868b}
     .checked{font-size:11px;color:#8e8e93;margin-top:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .history{border-radius:20px;overflow:hidden}
-    .history-row{display:grid;grid-template-columns:118px 1fr 160px 95px 82px;align-items:center;gap:12px;padding:14px 20px;border-top:1px solid #ededf0;font-size:13px;min-width:0}
+    .history-row{display:grid;grid-template-columns:118px 1fr 180px 95px 82px;align-items:center;gap:12px;padding:14px 20px;border-top:1px solid #ededf0;font-size:13px;min-width:0}
     .history-row:first-child{border-top:0}
     .history-row.header{background:#fafafa;font-size:11px;text-transform:uppercase;letter-spacing:.055em;color:#86868b;font-weight:650}
     .history-row>div{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -63,8 +65,9 @@
     .footer{display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap;padding:19px 2px 0;color:#86868b;font-size:11px}
     [data-view].hidden{display:none!important}
     button:focus-visible{outline:3px solid rgba(0,122,255,.3);outline-offset:2px}
-    @media(max-width:850px){.page{padding:24px 15px 36px}.hero-grid{grid-template-columns:1fr}.service-grid{grid-template-columns:repeat(2,1fr)}.history-row{grid-template-columns:92px 1fr 110px 70px}.history-row>*:nth-child(4){display:none}}
-    @media(max-width:520px){h1{font-size:30px}.top{flex-direction:column}.refresh{width:100%}.seg{display:flex;width:100%}.seg button{flex:1;padding:0 7px}.metrics{grid-template-columns:1fr 1fr}.metric:last-child{grid-column:1/-1}.service-grid,.service-grid.proxy{grid-template-columns:1fr}.history-row{grid-template-columns:72px 1fr 64px;padding:13px 14px}.history-row>*:nth-child(3),.history-row>*:nth-child(4){display:none}.section-head span{max-width:45%}}
+    @media(max-width:980px){.metrics{grid-template-columns:repeat(3,1fr)}.metric:nth-child(4),.metric:nth-child(5){grid-column:auto}}
+    @media(max-width:850px){.page{padding:24px 15px 36px}.hero-grid{grid-template-columns:1fr}.service-grid{grid-template-columns:repeat(2,1fr)}.history-row{grid-template-columns:92px 1fr 125px 70px}.history-row>*:nth-child(4){display:none}}
+    @media(max-width:520px){h1{font-size:30px}.top{flex-direction:column}.refresh{width:100%}.seg{display:flex;width:100%}.seg button{flex:1;padding:0 7px}.metrics{grid-template-columns:1fr 1fr}.metric:nth-child(5){grid-column:1/-1}.service-grid,.service-grid.proxy{grid-template-columns:1fr}.history-row{grid-template-columns:72px 1fr 64px;padding:13px 14px}.history-row>*:nth-child(3),.history-row>*:nth-child(4){display:none}.section-head span{max-width:45%}}
   </style>
 </head>
 <body>
@@ -85,13 +88,15 @@
     </nav>
 
     <section class="hero-grid" data-view="all proxy">
-      <div class="glass">
+      <div class="glass" id="overallCard">
         <div class="eyebrow">Overall status</div>
         <div class="overall"><div class="ring" id="overallRing">✓</div><div><strong id="overallText">Checking…</strong><small id="updatedText">Waiting for data</small></div></div>
         <div class="metrics">
           <div class="metric"><span>Direct interval</span><b id="directInterval">15 min</b></div>
           <div class="metric"><span>Proxy interval</span><b id="proxyInterval">2 hr</b></div>
           <div class="metric"><span>Proxy pool</span><b id="proxyCount">—</b></div>
+          <div class="metric"><span>Next direct run</span><b id="nextDirectRun">—</b></div>
+          <div class="metric"><span>Next proxy test</span><b id="nextProxyRun">—</b></div>
         </div>
       </div>
       <div class="glass">
@@ -122,36 +127,41 @@
 
   <script>
     const labels={prod:'MPDM PROD',dev:'MPDM DEV',app:'InReality V3',appDev:'InReality V3 DEV'};
+    const flags={US:'🇺🇸',JP:'🇯🇵',UK:'🇬🇧',ES:'🇪🇸',PL:'🇵🇱'};
     const $=id=>document.getElementById(id);
     const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const fmtDuration=ms=>Number.isFinite(Number(ms))?`${(Number(ms)/1000).toFixed(Number(ms)>=10000?1:2)} <small>s</small>`:'—';
     const fmtTime=value=>{if(!value)return '—';const d=new Date(value);return Number.isNaN(d.getTime())?'—':d.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});};
+    const fmtClock=value=>{if(!value)return '—';const d=new Date(value);if(Number.isNaN(d.getTime()))return '—';const tomorrow=d.toDateString()!==new Date().toDateString();return `${tomorrow?'Tomorrow ':''}${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;};
     const relative=value=>{if(!value)return 'Not checked yet';const t=new Date(value).getTime();if(!Number.isFinite(t))return 'Not checked yet';const s=Math.max(0,Math.round((Date.now()-t)/1000));if(s<60)return `${s}s ago`;if(s<3600)return `${Math.floor(s/60)}m ago`;if(s<86400)return `${Math.floor(s/3600)}h ago`;return `${Math.floor(s/86400)}d ago`;};
+    const prettyProxy=value=>{if(!value)return 'Proxy';const country=String(value).split('-')[0];const text=String(value).replaceAll('-',' · ');return `${flags[country]||'🌐'} ${text}`;};
     const statusBadge=result=>!result?'<span class="badge wait">WAIT</span>':result.ok?'<span class="badge">PASS</span>':'<span class="badge fail">FAIL</span>';
     function card(name,result,detail=''){
-      return `<article class="card"><div class="service-top"><div class="service-name">${esc(labels[name]||result?.service||name)}</div>${statusBadge(result)}</div><div class="duration">${fmtDuration(result?.durationMs)}</div><div class="checked">${esc(detail||relative(result?.checkedAt))}</div></article>`;
+      return `<article class="card${result&&!result.ok?' fail-card':''}"><div class="service-top"><div class="service-name">${esc(labels[name]||result?.service||name)}</div>${statusBadge(result)}</div><div class="duration">${fmtDuration(result?.durationMs)}</div><div class="checked">${esc(detail||relative(result?.checkedAt))}</div></article>`;
     }
     function renderDirect(data){
       const checks=data?.checks||{};$('directGrid').innerHTML=['prod','dev','app','appDev'].map(n=>card(n,checks[n])).join('');
       const newest=Object.values(checks).filter(Boolean).map(x=>x.checkedAt).sort().at(-1);$('directStamp').textContent=newest?`Updated ${relative(newest)}`:'Not checked yet';
     }
-    function renderProxy(data){
-      const checks=data?.checks||{};const names=['prod','app'];$('proxyGrid').innerHTML=names.map(n=>card(n,checks[n],data?.proxyLabel?`via ${data.proxyLabel}`:'Not checked yet')).join('');
-      $('proxyName').textContent=data?.proxyLabel||'Not checked yet';$('proxyIp').textContent=data?.exitIp||data?.proxyServer||'—';$('nextProxy').textContent=data?.nextProxyLabel||'—';$('proxyCount').textContent=data?.proxyCount?`${data.proxyCount} proxies`:'—';$('proxyStamp').textContent=data?.checkedAt?`Updated ${relative(data.checkedAt)}`:'Not checked yet';
+    function renderProxy(data,meta){
+      const checks=data?.checks||{};const names=['prod','app'];$('proxyGrid').innerHTML=names.map(n=>card(n,checks[n],data?.proxyLabel?`via ${prettyProxy(data.proxyLabel)}`:'Not checked yet')).join('');
+      $('proxyName').textContent=data?.proxyLabel?prettyProxy(data.proxyLabel):'Not checked yet';$('proxyIp').textContent=data?.exitIp||data?.proxyServer||'—';$('nextProxy').textContent=data?.nextProxyLabel?prettyProxy(data.nextProxyLabel):'—';$('proxyCount').textContent=(data?.proxyCount||meta?.configuredProxies)?`${data?.proxyCount||meta.configuredProxies} proxies`:'—';$('proxyStamp').textContent=data?.checkedAt?`Updated ${relative(data.checkedAt)}`:'Not checked yet';
     }
     function renderHistory(items){
       const rows=(items||[]).slice(0,30);if(!rows.length){$('historyBox').innerHTML='<div class="empty">No history yet. New checks will appear here automatically.</div>';return;}
-      $('historyBox').innerHTML='<div class="history-row header"><div>Time</div><div>Network</div><div>Service</div><div>Latency</div><div>Status</div></div>'+rows.map(x=>`<div class="history-row"><div>${esc(fmtTime(x.checkedAt))}</div><div>${esc(x.network==='proxy'?(x.proxyLabel||'Proxy'):'Direct')}</div><div>${esc(x.label||x.service||'—')}</div><div>${esc(Number.isFinite(Number(x.durationMs))?`${(Number(x.durationMs)/1000).toFixed(1)} s`:'—')}</div><div class="${x.ok?'pass':'fail-text'}">${x.ok?'PASS':'FAIL'}</div></div>`).join('');
+      $('historyBox').innerHTML='<div class="history-row header"><div>Time</div><div>Network</div><div>Service</div><div>Latency</div><div>Status</div></div>'+rows.map(x=>`<div class="history-row"><div>${esc(fmtTime(x.checkedAt))}</div><div>${esc(x.network==='proxy'?prettyProxy(x.proxyLabel||'Proxy'):'Direct')}</div><div>${esc(labels[x.label]||x.service||x.label||'—')}</div><div>${esc(Number.isFinite(Number(x.durationMs))?`${(Number(x.durationMs)/1000).toFixed(1)} s`:'—')}</div><div class="${x.ok?'pass':'fail-text'}">${x.ok?'PASS':'FAIL'}</div></div>`).join('');
     }
     async function getJson(url){const r=await fetch(url,{cache:'no-store'});if(!r.ok&&r.status!==503)throw new Error(`${url} HTTP ${r.status}`);return r.json();}
     async function refresh(){
       const btn=$('refreshBtn');btn.disabled=true;btn.textContent='Refreshing…';
       try{
         const [direct,proxy,history,meta]=await Promise.all([getJson('/health/all'),getJson('/health/proxy'),getJson('/api/history'),getJson('/api/meta')]);
-        renderDirect(direct);renderProxy(proxy);renderHistory(history.history);
+        renderDirect(direct);renderProxy(proxy,meta);renderHistory(history.history);
         $('directInterval').textContent=`${meta.intervalMinutes} min`;$('proxyInterval').textContent=meta.proxyIntervalMinutes>=60?`${meta.proxyIntervalMinutes/60} hr`:`${meta.proxyIntervalMinutes} min`;
-        const good=Boolean(direct.ok)&&(!proxy.checkedAt||Boolean(proxy.ok));$('overallRing').textContent=good?'✓':'!';$('overallRing').classList.toggle('bad',!good);$('overallText').textContent=good?'All systems operational':'Attention required';$('liveDot').classList.toggle('bad',!good);$('liveText').textContent=good?'Monitor online':'Monitor online · failure detected';$('updatedText').textContent=`Updated ${new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;$('footerStamp').textContent=`Auto refresh every 30s`;
-      }catch(error){$('liveDot').classList.add('bad');$('liveText').textContent='Dashboard could not load monitor data';$('overallRing').classList.add('bad');$('overallRing').textContent='!';$('overallText').textContent='Connection problem';$('updatedText').textContent=error.message;}
+        $('proxyCount').textContent=meta.configuredProxies?`${meta.configuredProxies} proxies`:$('proxyCount').textContent;
+        $('nextDirectRun').textContent=fmtClock(meta.nextDirectRunAt);$('nextProxyRun').textContent=fmtClock(meta.nextProxyRunAt);
+        const good=Boolean(direct.ok)&&(!proxy.checkedAt||Boolean(proxy.ok));$('overallRing').textContent=good?'✓':'!';$('overallRing').classList.toggle('bad',!good);$('overallCard').classList.toggle('attention',!good);$('overallText').textContent=good?'All systems operational':'Attention required';$('liveDot').classList.toggle('bad',!good);$('liveText').textContent=good?'Monitor online':'Monitor online · failure detected';$('updatedText').textContent=`Updated ${new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'})}`;$('footerStamp').textContent='Auto refresh every 30s';
+      }catch(error){$('liveDot').classList.add('bad');$('liveText').textContent='Dashboard could not load monitor data';$('overallRing').classList.add('bad');$('overallRing').textContent='!';$('overallCard').classList.add('attention');$('overallText').textContent='Connection problem';$('updatedText').textContent=error.message;}
       finally{btn.disabled=false;btn.textContent='↻ Refresh';}
     }
     document.querySelectorAll('[data-filter]').forEach(btn=>btn.addEventListener('click',()=>{document.querySelectorAll('[data-filter]').forEach(b=>b.classList.toggle('active',b===btn));const filter=btn.dataset.filter;document.querySelectorAll('[data-view]').forEach(s=>s.classList.toggle('hidden',filter!=='all'&&!s.dataset.view.split(' ').includes(filter)));}));
