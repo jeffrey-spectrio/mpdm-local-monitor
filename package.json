@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "node src/index.js",
-    "check": "node --check src/index.js",
+    "dashboard": "node src/dashboard-server.js",
+    "check": "node --check src/index.js && node --check src/dashboard-server.js",
     "test": "node --test"
   },
   "engines": {
