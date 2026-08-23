@@ -60,7 +60,7 @@ const config = {
 };
 
 const proxies = parseProxyList(process.env.PROXY_LIST || "");
-const PROXY_BLOCKED_RESOURCE_TYPES = new Set(["image", "media", "font"]);
+const PROXY_BLOCKED_RESOURCE_TYPES = new Set(["image", "media", "font", "stylesheet"]);
 const PROXY_BLOCKED_HOSTNAMES = new Set([
   "www.googletagmanager.com",
   "www.google-analytics.com",
@@ -303,8 +303,9 @@ function contextOptionsFor(proxy) {
   };
 }
 
-function shouldBlockProxyRequest(request) {
+function shouldBlockProxyRequest(request, stats) {
   if (!config.proxyBlockNonessential) return false;
+  if (stats.stopAfterLogin) return true;
   if (PROXY_BLOCKED_RESOURCE_TYPES.has(request.resourceType())) return true;
   try {
     return PROXY_BLOCKED_HOSTNAMES.has(new URL(request.url()).hostname);
@@ -316,8 +317,9 @@ function shouldBlockProxyRequest(request) {
 async function enableProxyRequestFiltering(context, stats) {
   if (!config.proxyBlockNonessential) return;
   await context.route("**/*", async (route) => {
-    if (shouldBlockProxyRequest(route.request())) {
+    if (shouldBlockProxyRequest(route.request(), stats)) {
       stats.blockedRequests += 1;
+      if (stats.stopAfterLogin) stats.postLoginBlockedRequests += 1;
       await route.abort("blockedbyclient");
       return;
     }
@@ -384,7 +386,7 @@ async function completeTwoStepLogin(page, monitor, timings) {
 async function checkSite(name, source, network = {}) {
   const startedAt = Date.now();
   const timings = {};
-  const stats = { blockedRequests: 0 };
+  const stats = { blockedRequests: 0, postLoginBlockedRequests: 0, stopAfterLogin: false };
   const monitor = monitors[name];
   let context;
   let page;
@@ -403,6 +405,10 @@ async function checkSite(name, source, network = {}) {
     } else {
       await completeMpdmLogin(page, monitor, timings);
     }
+    if (network.proxy && config.proxyBlockNonessential) {
+      stats.stopAfterLogin = true;
+      await page.evaluate(() => window.stop()).catch(() => {});
+    }
     timings.totalMs = elapsedSince(startedAt);
     const result = {
       ok: true,
@@ -416,6 +422,7 @@ async function checkSite(name, source, network = {}) {
             proxyLabel: network.proxy.label,
             proxyServer: network.proxy.server,
             blockedRequests: stats.blockedRequests,
+            postLoginBlockedRequests: stats.postLoginBlockedRequests,
             ...(network.exitIp ? { exitIp: network.exitIp } : {}),
           }
         : {}),
@@ -431,7 +438,12 @@ async function checkSite(name, source, network = {}) {
       proxy: network.proxy?.label,
       ok: true,
       durationMs: result.durationMs,
-      ...(network.proxy ? { blockedRequests: stats.blockedRequests } : {}),
+      ...(network.proxy
+        ? {
+            blockedRequests: stats.blockedRequests,
+            postLoginBlockedRequests: stats.postLoginBlockedRequests,
+          }
+        : {}),
     });
     return result;
   } catch (error) {
@@ -448,6 +460,7 @@ async function checkSite(name, source, network = {}) {
             proxyLabel: network.proxy.label,
             proxyServer: network.proxy.server,
             blockedRequests: stats.blockedRequests,
+            postLoginBlockedRequests: stats.postLoginBlockedRequests,
             ...(network.exitIp ? { exitIp: network.exitIp } : {}),
           }
         : {}),
@@ -464,7 +477,12 @@ async function checkSite(name, source, network = {}) {
       proxy: network.proxy?.label,
       ok: false,
       reason: result.reason,
-      ...(network.proxy ? { blockedRequests: stats.blockedRequests } : {}),
+      ...(network.proxy
+        ? {
+            blockedRequests: stats.blockedRequests,
+            postLoginBlockedRequests: stats.postLoginBlockedRequests,
+          }
+        : {}),
     });
     return result;
   } finally {
@@ -502,6 +520,10 @@ async function executeChecks(targetNames, source, network = {}) {
           proxyServer: network.proxy.server,
           blockedRequests: Object.values(checks).reduce(
             (total, result) => total + (result.blockedRequests || 0),
+            0,
+          ),
+          postLoginBlockedRequests: Object.values(checks).reduce(
+            (total, result) => total + (result.postLoginBlockedRequests || 0),
             0,
           ),
           ...(network.exitIp ? { exitIp: network.exitIp } : {}),
