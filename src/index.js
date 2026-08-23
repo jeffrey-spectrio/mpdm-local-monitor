@@ -56,9 +56,18 @@ const config = {
   proxyStatePath: process.env.PROXY_STATE_PATH || "data/proxy-state.json",
   proxyIpCheckUrl: process.env.PROXY_IP_CHECK_URL || "https://ipv4.webshare.io/",
   proxyTargetNames: splitList(process.env.PROXY_TARGETS || "prod,app"),
+  proxyBlockNonessential: process.env.PROXY_BLOCK_NONESSENTIAL !== "false",
 };
 
 const proxies = parseProxyList(process.env.PROXY_LIST || "");
+const PROXY_BLOCKED_RESOURCE_TYPES = new Set(["image", "media", "font"]);
+const PROXY_BLOCKED_HOSTNAMES = new Set([
+  "www.googletagmanager.com",
+  "www.google-analytics.com",
+  "region1.google-analytics.com",
+  "fonts.googleapis.com",
+  "rsms.me",
+]);
 
 const monitors = {
   prod: {
@@ -155,7 +164,6 @@ function validateConfig() {
   }
   if (!config.token) missing.push("MONITOR_TOKEN");
   if (missing.length) throw new Error(`Missing configuration: ${missing.join(", ")}`);
-
   if (!Number.isFinite(config.port) || config.port < 1 || config.port > 65535) {
     throw new Error("PORT must be between 1 and 65535");
   }
@@ -165,16 +173,10 @@ function validateConfig() {
   if (!Number.isFinite(config.proxyCheckIntervalMs) || config.proxyCheckIntervalMs < 60_000) {
     throw new Error("PROXY_CHECK_INTERVAL_MINUTES must be at least 1");
   }
-  if (
-    !Number.isInteger(config.failureNotificationThreshold) ||
-    config.failureNotificationThreshold < 1
-  ) {
+  if (!Number.isInteger(config.failureNotificationThreshold) || config.failureNotificationThreshold < 1) {
     throw new Error("FAILURE_NOTIFICATION_THRESHOLD must be at least 1");
   }
-  if (
-    !Number.isInteger(config.proxyFailureNotificationThreshold) ||
-    config.proxyFailureNotificationThreshold < 1
-  ) {
+  if (!Number.isInteger(config.proxyFailureNotificationThreshold) || config.proxyFailureNotificationThreshold < 1) {
     throw new Error("PROXY_FAILURE_NOTIFICATION_THRESHOLD must be at least 1");
   }
   if (config.slackWebhookUrl && !config.slackWebhookUrl.startsWith("https://")) {
@@ -218,7 +220,6 @@ async function sendSlack(text) {
     log("slack_notification_skipped", { reason: "SLACK_WEBHOOK_URL is not configured" });
     return false;
   }
-
   try {
     const response = await fetch(config.slackWebhookUrl, {
       method: "POST",
@@ -254,7 +255,6 @@ async function updateAlertState(
 ) {
   const state = alertStateFor(key);
   const network = networkDescription(result);
-
   if (result.ok) {
     if (state.alertSent) {
       const sent = await sendSlack(
@@ -267,10 +267,7 @@ async function updateAlertState(
     state.consecutiveFailures = 0;
   } else {
     state.consecutiveFailures += 1;
-    if (
-      state.consecutiveFailures >= threshold &&
-      (!state.alertSent || repeatFailureAlerts)
-    ) {
+    if (state.consecutiveFailures >= threshold && (!state.alertSent || repeatFailureAlerts)) {
       const sent = await sendSlack(
         `:rotating_light: ${monitors[name].label} login check failed ` +
           `${state.consecutiveFailures} time${state.consecutiveFailures === 1 ? "" : "s"} consecutively\n` +
@@ -281,7 +278,6 @@ async function updateAlertState(
       if (sent) state.alertSent = true;
     }
   }
-
   await saveAlertState().catch((error) => {
     log("alert_state_save_failed", { reason: error.message });
   });
@@ -307,6 +303,28 @@ function contextOptionsFor(proxy) {
   };
 }
 
+function shouldBlockProxyRequest(request) {
+  if (!config.proxyBlockNonessential) return false;
+  if (PROXY_BLOCKED_RESOURCE_TYPES.has(request.resourceType())) return true;
+  try {
+    return PROXY_BLOCKED_HOSTNAMES.has(new URL(request.url()).hostname);
+  } catch {
+    return false;
+  }
+}
+
+async function enableProxyRequestFiltering(context, stats) {
+  if (!config.proxyBlockNonessential) return;
+  await context.route("**/*", async (route) => {
+    if (shouldBlockProxyRequest(route.request())) {
+      stats.blockedRequests += 1;
+      await route.abort("blockedbyclient");
+      return;
+    }
+    await route.continue();
+  });
+}
+
 async function resolveProxyExitIp(proxy) {
   let context;
   try {
@@ -328,12 +346,10 @@ async function completeMpdmLogin(page, monitor, timings) {
   const successPath = `${targetUrl.pathname.replace(/\/$/, "")}/devices`;
   const emailInput = page.locator('input[type="email"]');
   await emailInput.waitFor({ state: "visible", timeout: 20_000 });
-
   const formFillStartedAt = Date.now();
   await emailInput.fill(monitor.email);
   await page.locator('input[type="password"]').fill(monitor.password);
   timings.formFillMs = elapsedSince(formFillStartedAt);
-
   const loginStartedAt = Date.now();
   await page.locator("button.login-submit").click();
   await page.waitForURL((url) => url.pathname === successPath, {
@@ -352,13 +368,11 @@ async function completeTwoStepLogin(page, monitor, timings) {
   await usernameInput.fill(monitor.email);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   timings.usernameStepMs = elapsedSince(usernameStartedAt);
-
   const passwordStartedAt = Date.now();
   const passwordInput = page.locator('input[type="password"]');
   await passwordInput.waitFor({ state: "visible", timeout: 20_000 });
   await passwordInput.fill(monitor.password);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
-
   const successUrl = new URL(monitor.successUrl);
   await page.waitForURL(
     (url) => url.origin === successUrl.origin && url.pathname === successUrl.pathname,
@@ -370,28 +384,26 @@ async function completeTwoStepLogin(page, monitor, timings) {
 async function checkSite(name, source, network = {}) {
   const startedAt = Date.now();
   const timings = {};
+  const stats = { blockedRequests: 0 };
   const monitor = monitors[name];
   let context;
   let page;
-
   try {
     const activeBrowser = await getBrowser();
     const setupStartedAt = Date.now();
     context = await activeBrowser.newContext(contextOptionsFor(network.proxy));
+    if (network.proxy) await enableProxyRequestFiltering(context, stats);
     page = await context.newPage();
     timings.pageSetupMs = elapsedSince(setupStartedAt);
-
     const pageLoadStartedAt = Date.now();
     await page.goto(monitor.url, { timeout: 30_000, waitUntil: "domcontentloaded" });
     timings.loginPageLoadMs = elapsedSince(pageLoadStartedAt);
-
     if (monitor.flow === "two-step") {
       await completeTwoStepLogin(page, monitor, timings);
     } else {
       await completeMpdmLogin(page, monitor, timings);
     }
     timings.totalMs = elapsedSince(startedAt);
-
     const result = {
       ok: true,
       service: monitor.service,
@@ -403,6 +415,7 @@ async function checkSite(name, source, network = {}) {
             proxyId: network.proxy.id,
             proxyLabel: network.proxy.label,
             proxyServer: network.proxy.server,
+            blockedRequests: stats.blockedRequests,
             ...(network.exitIp ? { exitIp: network.exitIp } : {}),
           }
         : {}),
@@ -411,7 +424,6 @@ async function checkSite(name, source, network = {}) {
       timings,
       finalUrl: sanitizedUrl(page.url()),
     };
-
     if (!network.proxy) latest[name] = result;
     log("login_check_completed", {
       target: name,
@@ -419,6 +431,7 @@ async function checkSite(name, source, network = {}) {
       proxy: network.proxy?.label,
       ok: true,
       durationMs: result.durationMs,
+      ...(network.proxy ? { blockedRequests: stats.blockedRequests } : {}),
     });
     return result;
   } catch (error) {
@@ -434,6 +447,7 @@ async function checkSite(name, source, network = {}) {
             proxyId: network.proxy.id,
             proxyLabel: network.proxy.label,
             proxyServer: network.proxy.server,
+            blockedRequests: stats.blockedRequests,
             ...(network.exitIp ? { exitIp: network.exitIp } : {}),
           }
         : {}),
@@ -443,7 +457,6 @@ async function checkSite(name, source, network = {}) {
       reason: error instanceof Error ? error.message : String(error),
       ...(page && sanitizedUrl(page.url()) ? { finalUrl: sanitizedUrl(page.url()) } : {}),
     };
-
     if (!network.proxy) latest[name] = result;
     log("login_check_completed", {
       target: name,
@@ -451,6 +464,7 @@ async function checkSite(name, source, network = {}) {
       proxy: network.proxy?.label,
       ok: false,
       reason: result.reason,
+      ...(network.proxy ? { blockedRequests: stats.blockedRequests } : {}),
     });
     return result;
   } finally {
@@ -463,7 +477,6 @@ async function checkSite(name, source, network = {}) {
 async function executeChecks(targetNames, source, network = {}) {
   const startedAt = Date.now();
   const checks = {};
-
   for (const name of targetNames) {
     checks[name] = await checkSite(name, source, network);
     const isProxy = Boolean(network.proxy);
@@ -475,7 +488,6 @@ async function executeChecks(targetNames, source, network = {}) {
       repeatFailureAlerts: isProxy,
     });
   }
-
   const ok = targetNames.every((name) => checks[name].ok);
   return {
     ok,
@@ -488,6 +500,10 @@ async function executeChecks(targetNames, source, network = {}) {
           proxyId: network.proxy.id,
           proxyLabel: network.proxy.label,
           proxyServer: network.proxy.server,
+          blockedRequests: Object.values(checks).reduce(
+            (total, result) => total + (result.blockedRequests || 0),
+            0,
+          ),
           ...(network.exitIp ? { exitIp: network.exitIp } : {}),
         }
       : {}),
@@ -517,14 +533,12 @@ async function runNextProxyChecks(source) {
       checkedAt: new Date().toISOString(),
     };
   }
-
   const index = proxyState.nextIndex % proxies.length;
   const proxy = proxies[index];
   proxyState.nextIndex = (index + 1) % proxies.length;
   await saveProxyState().catch((error) => {
     log("proxy_state_save_failed", { reason: error.message });
   });
-
   return enqueue(async () => {
     const exitIp = await resolveProxyExitIp(proxy);
     const result = await executeChecks(config.proxyTargetNames, source, { proxy, exitIp });
@@ -546,7 +560,6 @@ function healthResult(targetNames) {
       status: "not_checked_yet",
     };
   }
-
   const checks = Object.fromEntries(targetNames.map((name) => [name, latest[name]]));
   const ready = targetNames.every((name) => checks[name]);
   const ok = ready && targetNames.every((name) => checks[name].ok);
@@ -567,6 +580,7 @@ function proxyHealthResult() {
     status: proxies.length ? "not_checked_yet" : "proxy_not_configured",
     configuredProxies: proxies.length,
     proxyTargets: config.proxyTargetNames,
+    proxyBlockNonessential: config.proxyBlockNonessential,
     nextProxyLabel: proxies[proxyState.nextIndex % Math.max(proxies.length, 1)]?.label,
   };
 }
@@ -587,12 +601,10 @@ const targetsByPath = {
 
 async function handleRequest(request, response) {
   const requestUrl = new URL(request.url, `http://${request.headers.host || "localhost"}`);
-
   if (request.method !== "GET" && request.method !== "POST") {
     response.setHeader("allow", "GET, POST");
     return sendJson(response, { error: "Method not allowed" }, 405);
   }
-
   if (requestUrl.pathname === "/") {
     return sendJson(response, {
       service: "mpdm-local-monitor",
@@ -618,11 +630,11 @@ async function handleRequest(request, response) {
       proxyIntervalMinutes: config.proxyCheckIntervalMs / 60_000,
       configuredProxies: proxies.length,
       proxyTargets: config.proxyTargetNames,
+      proxyBlockNonessential: config.proxyBlockNonessential,
       failureNotificationThreshold: config.failureNotificationThreshold,
       proxyFailureNotificationThreshold: config.proxyFailureNotificationThreshold,
     });
   }
-
   if (requestUrl.pathname === "/notify/test") {
     if (request.method !== "POST") return sendJson(response, { error: "Use POST" }, 405);
     if (!tokenMatches(bearerToken(request), config.token)) {
@@ -635,7 +647,6 @@ async function handleRequest(request, response) {
       sent ? 200 : 502,
     );
   }
-
   if (requestUrl.pathname === "/health/proxy") {
     if (!tokenMatches(bearerToken(request), config.token)) {
       return sendJson(response, { error: "Unauthorized" }, 401);
@@ -643,7 +654,6 @@ async function handleRequest(request, response) {
     const result = proxyHealthResult();
     return sendJson(response, result, result.ok ? 200 : 503);
   }
-
   if (requestUrl.pathname === "/run/proxy") {
     if (request.method !== "POST") return sendJson(response, { error: "Use POST" }, 405);
     if (!tokenMatches(bearerToken(request), config.token)) {
@@ -652,19 +662,16 @@ async function handleRequest(request, response) {
     const result = await runNextProxyChecks("http");
     return sendJson(response, result, result.ok ? 200 : 502);
   }
-
   const targetNames = targetsByPath[requestUrl.pathname];
   if (!targetNames) return sendJson(response, { error: "Not found" }, 404);
   if (!tokenMatches(bearerToken(request), config.token)) {
     return sendJson(response, { error: "Unauthorized" }, 401);
   }
-
   if (requestUrl.pathname.startsWith("/run/")) {
     if (request.method !== "POST") return sendJson(response, { error: "Use POST" }, 405);
     const result = await runChecks(targetNames, "http");
     return sendJson(response, result, result.ok ? 200 : 502);
   }
-
   const result = healthResult(targetNames);
   return sendJson(response, result, result.ok ? 200 : 503);
 }
@@ -693,6 +700,7 @@ server.listen(config.port, config.host, () => {
     port: config.port,
     configuredProxies: proxies.length,
     proxyIntervalMinutes: config.proxyCheckIntervalMs / 60_000,
+    proxyBlockNonessential: config.proxyBlockNonessential,
   });
 });
 
