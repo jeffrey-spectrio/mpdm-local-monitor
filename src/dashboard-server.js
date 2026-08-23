@@ -14,6 +14,8 @@ const config = {
   historyPath: process.env.DASHBOARD_HISTORY_PATH || "data/dashboard-history.json",
   historyLimit: Number.parseInt(process.env.DASHBOARD_HISTORY_LIMIT || "500", 10),
   pollIntervalMs: Number.parseFloat(process.env.DASHBOARD_POLL_INTERVAL_SECONDS || "30") * 1000,
+  directIntervalMinutes: Number.parseFloat(process.env.CHECK_INTERVAL_MINUTES || "15"),
+  proxyIntervalMinutes: Number.parseFloat(process.env.PROXY_CHECK_INTERVAL_MINUTES || "120"),
 };
 
 const dashboardPath = resolve(projectRoot, "public/dashboard.html");
@@ -125,6 +127,20 @@ async function refreshSnapshots() {
   }
 }
 
+function newestCheckedAt(checks = {}) {
+  const timestamps = Object.values(checks)
+    .map((item) => item?.checkedAt)
+    .filter(Boolean)
+    .map((value) => new Date(value).getTime())
+    .filter(Number.isFinite);
+  return timestamps.length ? Math.max(...timestamps) : null;
+}
+
+function nextRunAt(lastCheckedAt, intervalMinutes) {
+  if (!lastCheckedAt || !Number.isFinite(intervalMinutes)) return null;
+  return new Date(lastCheckedAt + intervalMinutes * 60_000).toISOString();
+}
+
 function validateConfig() {
   if (!config.monitorToken) throw new Error("MONITOR_TOKEN is required");
   if (!Number.isInteger(config.port) || config.port < 1 || config.port > 65535) {
@@ -159,13 +175,19 @@ const server = createServer((request, response) => {
   }
   if (url.pathname === "/api/history") return sendJson(response, { history });
   if (url.pathname === "/api/meta") {
+    const directLastCheckedAt = newestCheckedAt(latestDirect?.checks || {});
+    const proxyLastCheckedAt = newestCheckedAt(latestProxy?.checks || {});
     return sendJson(response, {
       service: "mpdm-monitor-dashboard",
       readOnly: true,
-      intervalMinutes: Number.parseFloat(process.env.CHECK_INTERVAL_MINUTES || "15"),
-      proxyIntervalMinutes: Number.parseFloat(process.env.PROXY_CHECK_INTERVAL_MINUTES || "120"),
+      intervalMinutes: config.directIntervalMinutes,
+      proxyIntervalMinutes: config.proxyIntervalMinutes,
       configuredProxies: (process.env.PROXY_LIST || "").split(/[;,\n]+/).filter((item) => item.trim()).length,
       historyLimit: config.historyLimit,
+      directLastCheckedAt: directLastCheckedAt ? new Date(directLastCheckedAt).toISOString() : null,
+      proxyLastCheckedAt: proxyLastCheckedAt ? new Date(proxyLastCheckedAt).toISOString() : null,
+      nextDirectRunAt: nextRunAt(directLastCheckedAt, config.directIntervalMinutes),
+      nextProxyRunAt: nextRunAt(proxyLastCheckedAt, config.proxyIntervalMinutes),
     });
   }
   return sendJson(response, { error: "Not found" }, 404);
