@@ -45,7 +45,7 @@ PROXY_CHECK_ON_START=false
 PROXY_TARGETS=prod,app
 PROXY_USERNAME=your-webshare-username
 PROXY_PASSWORD=your-webshare-password
-PROXY_LIST=Tokyo=http://191.96.254.138:6185;Seattle=http://31.56.127.193:7684;London=http://45.38.107.97:6014
+PROXY_LIST=Proxy1=http://proxy1.example.com:8000;Proxy2=http://proxy2.example.com:8000;Proxy3=http://proxy3.example.com:8000
 PROXY_IP_CHECK_URL=https://ipv4.webshare.io/
 ```
 
