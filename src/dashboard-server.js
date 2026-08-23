@@ -1,16 +1,18 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
+const dashboardStartedAt = Date.now();
 
 const config = {
   host: process.env.DASHBOARD_HOST || "0.0.0.0",
   port: Number.parseInt(process.env.DASHBOARD_PORT || "8788", 10),
   monitorUrl: process.env.DASHBOARD_MONITOR_URL || "http://127.0.0.1:8787",
   monitorToken: process.env.MONITOR_TOKEN || "",
+  monitorLogPath: process.env.DASHBOARD_MONITOR_LOG_PATH || "monitor.log",
   historyPath: process.env.DASHBOARD_HISTORY_PATH || "data/dashboard-history.json",
   historyLimit: Number.parseInt(process.env.DASHBOARD_HISTORY_LIMIT || "500", 10),
   pollIntervalMs: Number.parseFloat(process.env.DASHBOARD_POLL_INTERVAL_SECONDS || "30") * 1000,
@@ -19,10 +21,14 @@ const config = {
 };
 
 const dashboardPath = resolve(projectRoot, "public/dashboard.html");
+const monitorLogPath = isAbsolute(config.monitorLogPath)
+  ? config.monitorLogPath
+  : resolve(projectRoot, config.monitorLogPath);
 let dashboardHtml = "";
 let history = [];
 let latestDirect = null;
 let latestProxy = null;
+let monitorSchedulerAnchorAt = null;
 let lastSnapshotKeys = new Set();
 
 function log(event, details = {}) {
@@ -105,11 +111,36 @@ async function loadHistory() {
   }
 }
 
+async function refreshSchedulerAnchor() {
+  try {
+    const text = await readFile(monitorLogPath, "utf8");
+    const lines = text.trim().split("\n");
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      if (!lines[index].includes('"event":"server_started"')) continue;
+      try {
+        const entry = JSON.parse(lines[index]);
+        const timestamp = new Date(entry.at).getTime();
+        if (Number.isFinite(timestamp)) {
+          monitorSchedulerAnchorAt = timestamp;
+          return;
+        }
+      } catch {
+        // Keep scanning older server_started entries if a line is malformed.
+      }
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      log("dashboard_monitor_log_read_failed", { reason: error.message });
+    }
+  }
+}
+
 async function refreshSnapshots() {
   try {
     const [direct, proxy] = await Promise.all([
       monitorJson("/health/all"),
       monitorJson("/health/proxy"),
+      refreshSchedulerAnchor(),
     ]);
     latestDirect = direct;
     latestProxy = proxy;
@@ -136,9 +167,13 @@ function newestCheckedAt(checks = {}) {
   return timestamps.length ? Math.max(...timestamps) : null;
 }
 
-function nextRunAt(lastCheckedAt, intervalMinutes) {
-  if (!lastCheckedAt || !Number.isFinite(intervalMinutes)) return null;
-  return new Date(lastCheckedAt + intervalMinutes * 60_000).toISOString();
+function nextScheduledRunAt(intervalMinutes) {
+  if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) return null;
+  const anchor = monitorSchedulerAnchorAt || dashboardStartedAt;
+  const intervalMs = intervalMinutes * 60_000;
+  const elapsed = Math.max(0, Date.now() - anchor);
+  const periods = Math.floor(elapsed / intervalMs) + 1;
+  return new Date(anchor + periods * intervalMs).toISOString();
 }
 
 function validateConfig() {
@@ -157,6 +192,7 @@ function validateConfig() {
 validateConfig();
 dashboardHtml = await readFile(dashboardPath, "utf8");
 await loadHistory();
+await refreshSchedulerAnchor();
 await refreshSnapshots();
 
 const server = createServer((request, response) => {
@@ -186,8 +222,9 @@ const server = createServer((request, response) => {
       historyLimit: config.historyLimit,
       directLastCheckedAt: directLastCheckedAt ? new Date(directLastCheckedAt).toISOString() : null,
       proxyLastCheckedAt: proxyLastCheckedAt ? new Date(proxyLastCheckedAt).toISOString() : null,
-      nextDirectRunAt: nextRunAt(directLastCheckedAt, config.directIntervalMinutes),
-      nextProxyRunAt: nextRunAt(proxyLastCheckedAt, config.proxyIntervalMinutes),
+      schedulerAnchorAt: monitorSchedulerAnchorAt ? new Date(monitorSchedulerAnchorAt).toISOString() : null,
+      nextDirectRunAt: nextScheduledRunAt(config.directIntervalMinutes),
+      nextProxyRunAt: nextScheduledRunAt(config.proxyIntervalMinutes),
     });
   }
   return sendJson(response, { error: "Not found" }, 404);
