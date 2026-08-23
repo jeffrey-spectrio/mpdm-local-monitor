@@ -245,7 +245,13 @@ function networkDescription(result) {
   return `${result.proxyLabel || "Proxy"}${result.exitIp ? ` (${result.exitIp})` : ""}`;
 }
 
-async function updateAlertState(name, result, key = name, threshold = config.failureNotificationThreshold) {
+async function updateAlertState(
+  name,
+  result,
+  key = name,
+  threshold = config.failureNotificationThreshold,
+  { repeatFailureAlerts = false } = {},
+) {
   const state = alertStateFor(key);
   const network = networkDescription(result);
 
@@ -261,7 +267,10 @@ async function updateAlertState(name, result, key = name, threshold = config.fai
     state.consecutiveFailures = 0;
   } else {
     state.consecutiveFailures += 1;
-    if (state.consecutiveFailures >= threshold && !state.alertSent) {
+    if (
+      state.consecutiveFailures >= threshold &&
+      (!state.alertSent || repeatFailureAlerts)
+    ) {
       const sent = await sendSlack(
         `:rotating_light: ${monitors[name].label} login check failed ` +
           `${state.consecutiveFailures} time${state.consecutiveFailures === 1 ? "" : "s"} consecutively\n` +
@@ -457,11 +466,14 @@ async function executeChecks(targetNames, source, network = {}) {
 
   for (const name of targetNames) {
     checks[name] = await checkSite(name, source, network);
-    const alertKey = network.proxy ? `${name}:proxy:${network.proxy.id}` : name;
-    const threshold = network.proxy
+    const isProxy = Boolean(network.proxy);
+    const alertKey = isProxy ? `${name}:proxy` : name;
+    const threshold = isProxy
       ? config.proxyFailureNotificationThreshold
       : config.failureNotificationThreshold;
-    await updateAlertState(name, checks[name], alertKey, threshold);
+    await updateAlertState(name, checks[name], alertKey, threshold, {
+      repeatFailureAlerts: isProxy,
+    });
   }
 
   const ok = targetNames.every((name) => checks[name].ok);
