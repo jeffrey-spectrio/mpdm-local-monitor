@@ -45,11 +45,11 @@ PROXY_CHECK_ON_START=false
 PROXY_TARGETS=prod,app
 PROXY_USERNAME=your-webshare-username
 PROXY_PASSWORD=your-webshare-password
-PROXY_LIST=Proxy1=http://proxy1.example.com:8000;Proxy2=http://proxy2.example.com:8000;Proxy3=http://proxy3.example.com:8000
+PROXY_LIST=US-Seattle=http://proxy1.example.com:8000;JP-Tokyo=http://proxy2.example.com:8000;UK-London-1=http://proxy3.example.com:8000;UK-London-2=http://proxy4.example.com:8000
 PROXY_IP_CHECK_URL=https://ipv4.webshare.io/
 ```
 
-`PROXY_LIST` entries can be plain `host:port` values or `Label=host:port`. Separate entries with semicolons or commas. Keep proxy credentials only in `.env`; never commit them.
+`PROXY_LIST` entries can be plain `host:port` values or `Label=host:port`. Separate entries with semicolons or commas. For Webshare, put the official Webshare location directly in the label, for example `US-Seattle`, `JP-Tokyo`, or `UK-London-1`. If multiple proxies share the same city, append `-1`, `-2`, and so on. The label is returned as `proxyLabel` in `/run/proxy` and `/health/proxy`, and is also included in proxy Slack alerts, so no separate IP geolocation request is required. Keep proxy credentials only in `.env`; never commit them.
 
 The round-robin position is saved in `data/proxy-state.json`, so restarting the service does not reset rotation to the first proxy. Before each proxy login cycle, the monitor attempts to retrieve the proxy exit IPv4 address and includes it in the result.
 
