@@ -42,6 +42,10 @@ const config = {
     process.env.FAILURE_NOTIFICATION_THRESHOLD || "2",
     10,
   ),
+  proxyFailureNotificationThreshold: Number.parseInt(
+    process.env.PROXY_FAILURE_NOTIFICATION_THRESHOLD || "1",
+    10,
+  ),
   slackWebhookUrl: process.env.SLACK_WEBHOOK_URL || "",
   alertStatePath: process.env.ALERT_STATE_PATH || "data/alert-state.json",
   proxyCheckIntervalMs:
@@ -167,6 +171,12 @@ function validateConfig() {
   ) {
     throw new Error("FAILURE_NOTIFICATION_THRESHOLD must be at least 1");
   }
+  if (
+    !Number.isInteger(config.proxyFailureNotificationThreshold) ||
+    config.proxyFailureNotificationThreshold < 1
+  ) {
+    throw new Error("PROXY_FAILURE_NOTIFICATION_THRESHOLD must be at least 1");
+  }
   if (config.slackWebhookUrl && !config.slackWebhookUrl.startsWith("https://")) {
     throw new Error("SLACK_WEBHOOK_URL must use HTTPS");
   }
@@ -235,7 +245,7 @@ function networkDescription(result) {
   return `${result.proxyLabel || "Proxy"}${result.exitIp ? ` (${result.exitIp})` : ""}`;
 }
 
-async function updateAlertState(name, result, key = name) {
+async function updateAlertState(name, result, key = name, threshold = config.failureNotificationThreshold) {
   const state = alertStateFor(key);
   const network = networkDescription(result);
 
@@ -251,13 +261,10 @@ async function updateAlertState(name, result, key = name) {
     state.consecutiveFailures = 0;
   } else {
     state.consecutiveFailures += 1;
-    if (
-      state.consecutiveFailures >= config.failureNotificationThreshold &&
-      !state.alertSent
-    ) {
+    if (state.consecutiveFailures >= threshold && !state.alertSent) {
       const sent = await sendSlack(
         `:rotating_light: ${monitors[name].label} login check failed ` +
-          `${state.consecutiveFailures} times consecutively\n` +
+          `${state.consecutiveFailures} time${state.consecutiveFailures === 1 ? "" : "s"} consecutively\n` +
           `Network: ${network}\n` +
           `Reason: ${result.reason || result.status}\n` +
           `Checked: ${result.checkedAt}`,
@@ -451,7 +458,10 @@ async function executeChecks(targetNames, source, network = {}) {
   for (const name of targetNames) {
     checks[name] = await checkSite(name, source, network);
     const alertKey = network.proxy ? `${name}:proxy:${network.proxy.id}` : name;
-    await updateAlertState(name, checks[name], alertKey);
+    const threshold = network.proxy
+      ? config.proxyFailureNotificationThreshold
+      : config.failureNotificationThreshold;
+    await updateAlertState(name, checks[name], alertKey, threshold);
   }
 
   const ok = targetNames.every((name) => checks[name].ok);
@@ -597,6 +607,7 @@ async function handleRequest(request, response) {
       configuredProxies: proxies.length,
       proxyTargets: config.proxyTargetNames,
       failureNotificationThreshold: config.failureNotificationThreshold,
+      proxyFailureNotificationThreshold: config.proxyFailureNotificationThreshold,
     });
   }
 
