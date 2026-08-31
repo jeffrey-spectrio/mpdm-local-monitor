@@ -22,7 +22,7 @@ Edit `.env` with the MPDM PROD, MPDM DEV, InReality V3 PROD, and InReality V3 DE
 node --env-file=.env src/index.js
 ```
 
-The service listens on `127.0.0.1:8787` by default. Checks run at startup and every 15 minutes.
+The service listens on `127.0.0.1:8700` by default. Checks run at startup and every 15 minutes.
 
 To receive Slack alerts, create a Slack incoming webhook and set it in `.env`:
 
@@ -38,8 +38,8 @@ Each site is counted independently. An alert is sent after two consecutive failu
 All monitor endpoints require `Authorization: Bearer <MONITOR_TOKEN>`.
 
 ```bash
-curl -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8787/health/all
-curl -X POST -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8787/run/all
+curl -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8700/health/all
+curl -X POST -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8700/run/all
 ```
 
 - `GET /health/prod`, `/health/dev`, `/health/app`, `/health/app-dev`, `/health/all`: return the latest cached result immediately.
@@ -51,7 +51,7 @@ All checks are queued instead of running Chromium sessions concurrently. Both In
 Test Slack after restarting the service:
 
 ```bash
-curl -X POST -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8787/notify/test
+curl -X POST -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8700/notify/test
 ```
 
 ## Start automatically on macOS
