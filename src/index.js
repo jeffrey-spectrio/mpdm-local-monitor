@@ -11,7 +11,7 @@ const JSON_HEADERS = {
 
 const config = {
   host: process.env.HOST || "127.0.0.1",
-  port: Number.parseInt(process.env.PORT || "8787", 10),
+  port: Number.parseInt(process.env.PORT || "8700", 10),
   token: process.env.MONITOR_TOKEN || "",
   intervalMs:
     Number.parseFloat(process.env.CHECK_INTERVAL_MINUTES || "15") * 60_000,
