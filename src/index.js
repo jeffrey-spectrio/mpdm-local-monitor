@@ -65,6 +65,7 @@ const config = {
   alertStatePath: process.env.ALERT_STATE_PATH || "data/alert-state.json",
   proxyUsername: process.env.PROXY_USERNAME || "",
   proxyPassword: process.env.PROXY_PASSWORD || "",
+  proxyTimeoutMs: Number.parseInt(process.env.PROXY_TIMEOUT_MS || "60000", 10),
   proxyBlockNonessential: process.env.PROXY_BLOCK_NONESSENTIAL === "true",
 };
 
@@ -183,6 +184,9 @@ function validateConfig() {
   if (!Number.isInteger(config.failureNotificationThreshold) || config.failureNotificationThreshold < 0) {
     throw new Error("FAILURE_NOTIFICATION_THRESHOLD must be a non-negative integer");
   }
+  if (!Number.isInteger(config.proxyTimeoutMs) || config.proxyTimeoutMs < 30_000) {
+    throw new Error("PROXY_TIMEOUT_MS must be an integer of at least 30000");
+  }
   if (config.slackWebhookUrl && !config.slackWebhookUrl.startsWith("https://")) {
     throw new Error("SLACK_WEBHOOK_URL must use HTTPS");
   }
@@ -299,11 +303,11 @@ async function enableProxyRequestFiltering(context, stats) {
   });
 }
 
-async function completeMpdmLogin(page, monitor, timings) {
+async function completeMpdmLogin(page, monitor, timings, timeoutMs = 30_000) {
   const targetUrl = new URL(monitor.url);
   const successPath = `${targetUrl.pathname.replace(/\/$/, "")}/devices`;
   const emailInput = page.locator('input[type="email"]');
-  await emailInput.waitFor({ state: "visible", timeout: 20_000 });
+  await emailInput.waitFor({ state: "visible", timeout: timeoutMs });
   const formFillStartedAt = Date.now();
   await emailInput.fill(monitor.email);
   await page.locator('input[type="password"]').fill(monitor.password);
@@ -311,30 +315,30 @@ async function completeMpdmLogin(page, monitor, timings) {
   const loginStartedAt = Date.now();
   await page.locator("button.login-submit").click();
   await page.waitForURL((url) => url.pathname === successPath, {
-    timeout: 30_000,
+    timeout: timeoutMs,
     waitUntil: "domcontentloaded",
   });
   timings.loginSubmitMs = elapsedSince(loginStartedAt);
 }
 
-async function completeTwoStepLogin(page, monitor, timings) {
+async function completeTwoStepLogin(page, monitor, timings, timeoutMs = 45_000) {
   const usernameStartedAt = Date.now();
   const usernameInput = page
     .locator('#username, input[name="username"], input[autocomplete="email"]')
     .first();
-  await usernameInput.waitFor({ state: "visible", timeout: 20_000 });
+  await usernameInput.waitFor({ state: "visible", timeout: timeoutMs });
   await usernameInput.fill(monitor.email);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   timings.usernameStepMs = elapsedSince(usernameStartedAt);
   const passwordStartedAt = Date.now();
   const passwordInput = page.locator('input[type="password"]');
-  await passwordInput.waitFor({ state: "visible", timeout: 20_000 });
+  await passwordInput.waitFor({ state: "visible", timeout: timeoutMs });
   await passwordInput.fill(monitor.password);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   const successUrl = new URL(monitor.successUrl);
   await page.waitForURL(
     (url) => url.origin === successUrl.origin && url.pathname === successUrl.pathname,
-    { timeout: 45_000, waitUntil: "domcontentloaded" },
+    { timeout: timeoutMs, waitUntil: "domcontentloaded" },
   );
   timings.passwordStepMs = elapsedSince(passwordStartedAt);
 }
@@ -354,12 +358,16 @@ async function checkSite(name, source, network = {}) {
     page = await context.newPage();
     timings.pageSetupMs = elapsedSince(setupStartedAt);
     const pageLoadStartedAt = Date.now();
-    await page.goto(monitor.url, { timeout: 30_000, waitUntil: "domcontentloaded" });
+    const timeoutMs = network.proxy ? config.proxyTimeoutMs : undefined;
+    await page.goto(monitor.url, {
+      timeout: timeoutMs || 30_000,
+      waitUntil: "domcontentloaded",
+    });
     timings.loginPageLoadMs = elapsedSince(pageLoadStartedAt);
     if (monitor.flow === "two-step") {
-      await completeTwoStepLogin(page, monitor, timings);
+      await completeTwoStepLogin(page, monitor, timings, timeoutMs || 45_000);
     } else {
-      await completeMpdmLogin(page, monitor, timings);
+      await completeMpdmLogin(page, monitor, timings, timeoutMs || 30_000);
     }
     if (network.proxy && config.proxyBlockNonessential) {
       stats.stopAfterLogin = true;
@@ -682,6 +690,7 @@ server.listen(config.port, config.host, () => {
     configuredProxies: proxies.length,
     proxyIntervalMinutes: config.intervalMs / 60_000,
     failureNotificationThreshold: config.failureNotificationThreshold,
+    proxyTimeoutMs: config.proxyTimeoutMs,
     proxyBlockNonessential: config.proxyBlockNonessential,
   });
 });
