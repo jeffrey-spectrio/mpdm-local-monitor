@@ -33,7 +33,7 @@ FAILURE_NOTIFICATION_THRESHOLD=2
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 ```
 
-Each full monitoring cycle runs the direct network and every configured proxy. Each network tests all four URLs. `FAILURE_NOTIFICATION_THRESHOLD` is the number of failed networks allowed before alerting: with `2`, three or more failures send an alert, while two or fewer failures do not. Every cycle above the threshold sends an alert; recovery does not send a separate message.
+Each full monitoring cycle runs the direct network and every configured proxy in parallel. Each network tests all four URLs sequentially. `FAILURE_NOTIFICATION_THRESHOLD` is the number of failed networks allowed before alerting: with `2`, three or more failures send an alert, while two or fewer failures do not. Every cycle above the threshold sends an alert; recovery does not send a separate message.
 
 ## Proxy monitoring
 
@@ -57,7 +57,7 @@ PROXY_BLOCK_NONESSENTIAL=false
 
 Set `PROXY_URL` for one proxy, or set `PROXY_LIST` for multiple proxies. Each `PROXY_LIST` entry can contain its own credentials in standard URL form: `Label=http://username:password@host:port`. URL-encode special characters in credentials (`@` → `%40`, `#` → `%23`, etc.). Global `PROXY_USERNAME` and `PROXY_PASSWORD` are only fallbacks for entries without embedded credentials, and all secrets must stay in `.env`.
 
-There is no round-robin skip: every configured proxy runs on every cycle. No extra IP lookup is performed, which keeps proxy execution close to direct execution. Proxy server credentials are redacted from returned results and logs.
+There is no round-robin skip: every configured proxy runs on every cycle. Direct and proxy networks run in parallel, while each network checks its four URLs sequentially. No extra IP lookup is performed, which keeps proxy execution close to direct execution. Proxy server credentials are redacted from returned results and logs.
 
 Proxy page and login waits use `PROXY_TIMEOUT_MS` (60 seconds by default); direct checks keep their existing timeouts. Increase this value if a proxy is consistently slower, for example `PROXY_TIMEOUT_MS=90000`.
 

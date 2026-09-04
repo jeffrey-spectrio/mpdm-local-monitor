@@ -121,6 +121,7 @@ const monitors = {
 };
 
 let browser;
+let browserStartPromise;
 let checkQueue = Promise.resolve();
 const latest = Object.fromEntries(Object.keys(monitors).map((name) => [name, null]));
 let latestProxyCycle = null;
@@ -225,12 +226,18 @@ async function updateCycleAlert(cycle) {
 }
 
 async function getBrowser() {
-  if (!browser?.isConnected()) {
-    const startedAt = Date.now();
-    browser = await chromium.launch({ headless: config.headless });
-    log("browser_started", { durationMs: elapsedSince(startedAt) });
+  if (browser?.isConnected()) return browser;
+  if (!browserStartPromise) {
+    browserStartPromise = (async () => {
+      const startedAt = Date.now();
+      browser = await chromium.launch({ headless: config.headless });
+      log("browser_started", { durationMs: elapsedSince(startedAt) });
+      return browser;
+    })().finally(() => {
+      browserStartPromise = undefined;
+    });
   }
-  return browser;
+  return browserStartPromise;
 }
 
 function contextOptionsFor(proxy) {
@@ -470,11 +477,11 @@ function runChecks(targetNames, source) {
 
 async function executeFullCycle(source) {
   const startedAt = Date.now();
-  const direct = await executeChecks(ALL_TARGET_NAMES, source);
-  const proxyResults = [];
-  for (const proxy of proxies) {
-    proxyResults.push(await executeChecks(ALL_TARGET_NAMES, source, { proxy }));
-  }
+  const networkResults = await Promise.all([
+    executeChecks(ALL_TARGET_NAMES, source),
+    ...proxies.map((proxy) => executeChecks(ALL_TARGET_NAMES, source, { proxy })),
+  ]);
+  const [direct, ...proxyResults] = networkResults;
 
   const cycle = {
     ok: [direct, ...proxyResults].every((result) => result.ok),
