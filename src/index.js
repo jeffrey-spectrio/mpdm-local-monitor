@@ -3,27 +3,83 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname } from "node:path";
 import { chromium } from "playwright";
+import {
+  cycleFailureCount,
+  formatCycleAlert,
+  isAlertThresholdExceeded,
+} from "./alert-format.js";
 
 const JSON_HEADERS = {
   "cache-control": "no-store",
   "content-type": "application/json; charset=utf-8",
 };
 
+const ALL_TARGET_NAMES = ["prod", "dev", "app", "appDev"];
+
+function splitList(value) {
+  return (value || "")
+    .split(/[;,\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeProxyServer(value) {
+  return /^[a-z]+:\/\//i.test(value) ? value : `http://${value}`;
+}
+
+function displayProxyServer(value) {
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    return url.href;
+  } catch {
+    return value;
+  }
+}
+
+function parseProxyList(value) {
+  return splitList(value).map((entry, index) => {
+    const equalsIndex = entry.indexOf("=");
+    const label = equalsIndex > 0 ? entry.slice(0, equalsIndex).trim() : `Proxy ${index + 1}`;
+    const rawServer = equalsIndex > 0 ? entry.slice(equalsIndex + 1).trim() : entry;
+    const server = normalizeProxyServer(rawServer);
+    const id = createHash("sha256").update(server).digest("hex").slice(0, 10);
+    return { id, label, server, displayServer: displayProxyServer(server) };
+  });
+}
+
 const config = {
   host: process.env.HOST || "127.0.0.1",
   port: Number.parseInt(process.env.PORT || "8700", 10),
   token: process.env.MONITOR_TOKEN || "",
-  intervalMs:
-    Number.parseFloat(process.env.CHECK_INTERVAL_MINUTES || "15") * 60_000,
+  intervalMs: Number.parseFloat(process.env.CHECK_INTERVAL_MINUTES || "15") * 60_000,
   checkOnStart: process.env.CHECK_ON_START !== "false",
   headless: process.env.HEADLESS !== "false",
   failureNotificationThreshold: Number.parseInt(
-    process.env.FAILURE_NOTIFICATION_THRESHOLD || "2",
+    process.env.FAILURE_NOTIFICATION_THRESHOLD || "3",
     10,
   ),
   slackWebhookUrl: process.env.SLACK_WEBHOOK_URL || "",
   alertStatePath: process.env.ALERT_STATE_PATH || "data/alert-state.json",
+  proxyUsername: process.env.PROXY_USERNAME || "",
+  proxyPassword: process.env.PROXY_PASSWORD || "",
+  proxyBlockNonessential: process.env.PROXY_BLOCK_NONESSENTIAL === "true",
 };
+
+const proxyListValue =
+  process.env.PROXY_URL
+    ? `VPS=${process.env.PROXY_URL}`
+    : process.env.PROXY_LIST || "";
+const proxies = parseProxyList(proxyListValue);
+const PROXY_BLOCKED_RESOURCE_TYPES = new Set(["image", "media", "font", "stylesheet"]);
+const PROXY_BLOCKED_HOSTNAMES = new Set([
+  "www.googletagmanager.com",
+  "www.google-analytics.com",
+  "region1.google-analytics.com",
+  "fonts.googleapis.com",
+  "rsms.me",
+]);
 
 const monitors = {
   prod: {
@@ -68,12 +124,8 @@ const monitors = {
 let browser;
 let checkQueue = Promise.resolve();
 const latest = Object.fromEntries(Object.keys(monitors).map((name) => [name, null]));
-let alertState = Object.fromEntries(
-  Object.keys(monitors).map((name) => [
-    name,
-    { consecutiveFailures: 0, alertSent: false },
-  ]),
-);
+let latestProxyCycle = null;
+let alertState = { aggregate: { alertSent: false } };
 
 function elapsedSince(startedAt) {
   return Date.now() - startedAt;
@@ -127,11 +179,8 @@ function validateConfig() {
   if (!Number.isFinite(config.intervalMs) || config.intervalMs < 60_000) {
     throw new Error("CHECK_INTERVAL_MINUTES must be at least 1");
   }
-  if (
-    !Number.isInteger(config.failureNotificationThreshold) ||
-    config.failureNotificationThreshold < 1
-  ) {
-    throw new Error("FAILURE_NOTIFICATION_THRESHOLD must be at least 1");
+  if (!Number.isInteger(config.failureNotificationThreshold) || config.failureNotificationThreshold < 0) {
+    throw new Error("FAILURE_NOTIFICATION_THRESHOLD must be a non-negative integer");
   }
   if (config.slackWebhookUrl && !config.slackWebhookUrl.startsWith("https://")) {
     throw new Error("SLACK_WEBHOOK_URL must use HTTPS");
@@ -141,8 +190,8 @@ function validateConfig() {
 async function loadAlertState() {
   try {
     const stored = JSON.parse(await readFile(config.alertStatePath, "utf8"));
-    for (const name of Object.keys(alertState)) {
-      if (stored[name]) alertState[name] = stored[name];
+    if (stored.aggregate && typeof stored.aggregate === "object") {
+      alertState.aggregate = { ...alertState.aggregate, ...stored.aggregate };
     }
   } catch (error) {
     if (error.code !== "ENOENT") log("alert_state_load_failed", { reason: error.message });
@@ -159,7 +208,6 @@ async function sendSlack(text) {
     log("slack_notification_skipped", { reason: "SLACK_WEBHOOK_URL is not configured" });
     return false;
   }
-
   try {
     const response = await fetch(config.slackWebhookUrl, {
       method: "POST",
@@ -176,31 +224,28 @@ async function sendSlack(text) {
   }
 }
 
-async function updateAlertState(name, result) {
-  const state = alertState[name];
-  if (result.ok) {
-    if (state.alertSent) {
-      const sent = await sendSlack(
-        `:white_check_mark: ${monitors[name].label} recovered\n` +
-          `Login succeeded in ${result.durationMs} ms\n${result.finalUrl}`,
-      );
-      if (sent) state.alertSent = false;
-    }
-    state.consecutiveFailures = 0;
-  } else {
-    state.consecutiveFailures += 1;
-    if (
-      state.consecutiveFailures >= config.failureNotificationThreshold &&
-      !state.alertSent
-    ) {
-      const sent = await sendSlack(
-        `:rotating_light: ${monitors[name].label} login check failed ` +
-          `${state.consecutiveFailures} times consecutively\n` +
-          `Reason: ${result.reason || result.status}\n` +
-          `Checked: ${result.checkedAt}`,
-      );
-      if (sent) state.alertSent = true;
-    }
+function cycleAlertText(cycle, recovered = false) {
+  return formatCycleAlert(cycle, {
+    failureThreshold: config.failureNotificationThreshold,
+    labels: Object.fromEntries(
+      Object.entries(monitors).map(([name, monitor]) => [name, monitor.label]),
+    ),
+    recovered,
+  });
+}
+
+async function updateCycleAlert(cycle) {
+  const state = alertState.aggregate;
+  const exceeded = isAlertThresholdExceeded(
+    cycle,
+    config.failureNotificationThreshold,
+  );
+  if (exceeded && !state.alertSent) {
+    const sent = await sendSlack(cycleAlertText(cycle));
+    if (sent) state.alertSent = true;
+  } else if (!exceeded && state.alertSent) {
+    const sent = await sendSlack(cycleAlertText(cycle, true));
+    if (sent) state.alertSent = false;
   }
   await saveAlertState().catch((error) => {
     log("alert_state_save_failed", { reason: error.message });
@@ -216,17 +261,50 @@ async function getBrowser() {
   return browser;
 }
 
+function contextOptionsFor(proxy) {
+  if (!proxy) return {};
+  return {
+    proxy: {
+      server: proxy.server,
+      ...(config.proxyUsername ? { username: config.proxyUsername } : {}),
+      ...(config.proxyPassword ? { password: config.proxyPassword } : {}),
+    },
+  };
+}
+
+function shouldBlockProxyRequest(request, stats) {
+  if (!config.proxyBlockNonessential) return false;
+  if (stats.stopAfterLogin) return true;
+  if (PROXY_BLOCKED_RESOURCE_TYPES.has(request.resourceType())) return true;
+  try {
+    return PROXY_BLOCKED_HOSTNAMES.has(new URL(request.url()).hostname);
+  } catch {
+    return false;
+  }
+}
+
+async function enableProxyRequestFiltering(context, stats) {
+  if (!config.proxyBlockNonessential) return;
+  await context.route("**/*", async (route) => {
+    if (shouldBlockProxyRequest(route.request(), stats)) {
+      stats.blockedRequests += 1;
+      if (stats.stopAfterLogin) stats.postLoginBlockedRequests += 1;
+      await route.abort("blockedbyclient");
+      return;
+    }
+    await route.continue();
+  });
+}
+
 async function completeMpdmLogin(page, monitor, timings) {
   const targetUrl = new URL(monitor.url);
   const successPath = `${targetUrl.pathname.replace(/\/$/, "")}/devices`;
   const emailInput = page.locator('input[type="email"]');
   await emailInput.waitFor({ state: "visible", timeout: 20_000 });
-
   const formFillStartedAt = Date.now();
   await emailInput.fill(monitor.email);
   await page.locator('input[type="password"]').fill(monitor.password);
   timings.formFillMs = elapsedSince(formFillStartedAt);
-
   const loginStartedAt = Date.now();
   await page.locator("button.login-submit").click();
   await page.waitForURL((url) => url.pathname === successPath, {
@@ -238,69 +316,88 @@ async function completeMpdmLogin(page, monitor, timings) {
 
 async function completeTwoStepLogin(page, monitor, timings) {
   const usernameStartedAt = Date.now();
-  const usernameInput = page.locator(
-    '#username, input[name="username"], input[autocomplete="email"]',
-  ).first();
+  const usernameInput = page
+    .locator('#username, input[name="username"], input[autocomplete="email"]')
+    .first();
   await usernameInput.waitFor({ state: "visible", timeout: 20_000 });
   await usernameInput.fill(monitor.email);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
   timings.usernameStepMs = elapsedSince(usernameStartedAt);
-
   const passwordStartedAt = Date.now();
   const passwordInput = page.locator('input[type="password"]');
   await passwordInput.waitFor({ state: "visible", timeout: 20_000 });
   await passwordInput.fill(monitor.password);
   await page.getByRole("button", { name: "Continue", exact: true }).click();
-
   const successUrl = new URL(monitor.successUrl);
   await page.waitForURL(
-    (url) =>
-      url.origin === successUrl.origin && url.pathname === successUrl.pathname,
+    (url) => url.origin === successUrl.origin && url.pathname === successUrl.pathname,
     { timeout: 45_000, waitUntil: "domcontentloaded" },
   );
   timings.passwordStepMs = elapsedSince(passwordStartedAt);
 }
 
-async function checkSite(name, source) {
+async function checkSite(name, source, network = {}) {
   const startedAt = Date.now();
   const timings = {};
+  const stats = { blockedRequests: 0, postLoginBlockedRequests: 0, stopAfterLogin: false };
   const monitor = monitors[name];
   let context;
   let page;
-
   try {
     const activeBrowser = await getBrowser();
     const setupStartedAt = Date.now();
-    context = await activeBrowser.newContext();
+    context = await activeBrowser.newContext(contextOptionsFor(network.proxy));
+    if (network.proxy) await enableProxyRequestFiltering(context, stats);
     page = await context.newPage();
     timings.pageSetupMs = elapsedSince(setupStartedAt);
-
     const pageLoadStartedAt = Date.now();
-    await page.goto(monitor.url, {
-      timeout: 30_000,
-      waitUntil: "domcontentloaded",
-    });
+    await page.goto(monitor.url, { timeout: 30_000, waitUntil: "domcontentloaded" });
     timings.loginPageLoadMs = elapsedSince(pageLoadStartedAt);
-
     if (monitor.flow === "two-step") {
       await completeTwoStepLogin(page, monitor, timings);
     } else {
       await completeMpdmLogin(page, monitor, timings);
     }
+    if (network.proxy && config.proxyBlockNonessential) {
+      stats.stopAfterLogin = true;
+      await page.evaluate(() => window.stop()).catch(() => {});
+    }
     timings.totalMs = elapsedSince(startedAt);
-
     const result = {
       ok: true,
       service: monitor.service,
       status: "login_succeeded",
       source,
+      network: network.proxy ? "proxy" : "direct",
+      ...(network.proxy
+        ? {
+            proxyId: network.proxy.id,
+            proxyLabel: network.proxy.label,
+            proxyServer: network.proxy.displayServer,
+            blockedRequests: stats.blockedRequests,
+            postLoginBlockedRequests: stats.postLoginBlockedRequests,
+            ...(network.exitIp ? { exitIp: network.exitIp } : {}),
+          }
+        : {}),
       checkedAt: new Date().toISOString(),
       durationMs: timings.totalMs,
       timings,
       finalUrl: sanitizedUrl(page.url()),
     };
-    latest[name] = result;
-    log("login_check_completed", { target: name, ok: true, durationMs: result.durationMs });
+    if (!network.proxy) latest[name] = result;
+    log("login_check_completed", {
+      target: name,
+      network: result.network,
+      proxy: network.proxy?.label,
+      ok: true,
+      durationMs: result.durationMs,
+      ...(network.proxy
+        ? {
+            blockedRequests: stats.blockedRequests,
+            postLoginBlockedRequests: stats.postLoginBlockedRequests,
+          }
+        : {}),
+    });
     return result;
   } catch (error) {
     timings.totalMs = elapsedSince(startedAt);
@@ -309,16 +406,37 @@ async function checkSite(name, source) {
       service: monitor.service,
       status: "login_failed",
       source,
+      network: network.proxy ? "proxy" : "direct",
+      ...(network.proxy
+        ? {
+            proxyId: network.proxy.id,
+            proxyLabel: network.proxy.label,
+            proxyServer: network.proxy.displayServer,
+            blockedRequests: stats.blockedRequests,
+            postLoginBlockedRequests: stats.postLoginBlockedRequests,
+            ...(network.exitIp ? { exitIp: network.exitIp } : {}),
+          }
+        : {}),
       checkedAt: new Date().toISOString(),
       durationMs: timings.totalMs,
       timings,
       reason: error instanceof Error ? error.message : String(error),
-      ...(page && sanitizedUrl(page.url())
-        ? { finalUrl: sanitizedUrl(page.url()) }
-        : {}),
+      ...(page && sanitizedUrl(page.url()) ? { finalUrl: sanitizedUrl(page.url()) } : {}),
     };
-    latest[name] = result;
-    log("login_check_completed", { target: name, ok: false, reason: result.reason });
+    if (!network.proxy) latest[name] = result;
+    log("login_check_completed", {
+      target: name,
+      network: result.network,
+      proxy: network.proxy?.label,
+      ok: false,
+      reason: result.reason,
+      ...(network.proxy
+        ? {
+            blockedRequests: stats.blockedRequests,
+            postLoginBlockedRequests: stats.postLoginBlockedRequests,
+          }
+        : {}),
+    });
     return result;
   } finally {
     await context?.close().catch((error) => {
@@ -327,29 +445,90 @@ async function checkSite(name, source) {
   }
 }
 
-async function runChecks(targetNames, source) {
-  const task = async () => {
-    const startedAt = Date.now();
-    const checks = {};
-    for (const name of targetNames) {
-      checks[name] = await checkSite(name, source);
-      await updateAlertState(name, checks[name]);
-    }
-    const ok = targetNames.every((name) => checks[name].ok);
-    return {
-      ok,
-      service: targetNames.length === 1 ? monitors[targetNames[0]].service : "monitor-all",
-      status: ok ? "all_logins_succeeded" : "one_or_more_logins_failed",
-      source,
-      checkedAt: new Date().toISOString(),
-      durationMs: elapsedSince(startedAt),
-      checks,
-    };
+async function executeChecks(targetNames, source, network = {}) {
+  const startedAt = Date.now();
+  const checks = {};
+  for (const name of targetNames) {
+    checks[name] = await checkSite(name, source, network);
+  }
+  const ok = targetNames.every((name) => checks[name].ok);
+  return {
+    ok,
+    service: targetNames.length === 1 ? monitors[targetNames[0]].service : "monitor-all",
+    status: ok ? "all_logins_succeeded" : "one_or_more_logins_failed",
+    source,
+    network: network.proxy ? "proxy" : "direct",
+    ...(network.proxy
+      ? {
+          proxyId: network.proxy.id,
+          proxyLabel: network.proxy.label,
+          proxyServer: network.proxy.displayServer,
+          blockedRequests: Object.values(checks).reduce(
+            (total, result) => total + (result.blockedRequests || 0),
+            0,
+          ),
+          postLoginBlockedRequests: Object.values(checks).reduce(
+            (total, result) => total + (result.postLoginBlockedRequests || 0),
+            0,
+          ),
+          ...(network.exitIp ? { exitIp: network.exitIp } : {}),
+        }
+      : {}),
+    checkedAt: new Date().toISOString(),
+    durationMs: elapsedSince(startedAt),
+    checks,
   };
+}
 
+function enqueue(task) {
   const result = checkQueue.then(task, task);
   checkQueue = result.then(() => undefined, () => undefined);
   return result;
+}
+
+function runChecks(targetNames, source) {
+  return enqueue(() => executeChecks(targetNames, source));
+}
+
+async function executeFullCycle(source) {
+  const startedAt = Date.now();
+  const direct = await executeChecks(ALL_TARGET_NAMES, source);
+  const proxyResults = [];
+  for (const proxy of proxies) {
+    proxyResults.push(await executeChecks(ALL_TARGET_NAMES, source, { proxy }));
+  }
+
+  const cycle = {
+    ok: [direct, ...proxyResults].every((result) => result.ok),
+    service: "monitor-cycle",
+    status: "cycle_completed",
+    source,
+    network: "combined",
+    direct,
+    proxyResults,
+    proxyCount: proxies.length,
+    failureCount: 0,
+    failureThreshold: config.failureNotificationThreshold,
+    checkedAt: new Date().toISOString(),
+    durationMs: elapsedSince(startedAt),
+  };
+  cycle.failureCount = cycleFailureCount(cycle);
+  cycle.alertThresholdExceeded = isAlertThresholdExceeded(
+    cycle,
+    config.failureNotificationThreshold,
+  );
+  cycle.status = cycle.alertThresholdExceeded
+    ? "alert_threshold_exceeded"
+    : cycle.failureCount
+      ? "failures_below_alert_threshold"
+      : "all_checks_succeeded";
+  latestProxyCycle = cycle;
+  await updateCycleAlert(cycle);
+  return cycle;
+}
+
+function runFullCycle(source) {
+  return enqueue(() => executeFullCycle(source));
 }
 
 function healthResult(targetNames) {
@@ -369,6 +548,19 @@ function healthResult(targetNames) {
     status: ready ? (ok ? "all_logins_succeeded" : "one_or_more_logins_failed") : "not_checked_yet",
     checkedAt: new Date().toISOString(),
     checks,
+  };
+}
+
+function proxyHealthResult() {
+  if (latestProxyCycle) return latestProxyCycle;
+  return {
+    ok: false,
+    service: "proxy-monitor",
+    status: proxies.length ? "not_checked_yet" : "proxy_not_configured",
+    configuredProxies: proxies.length,
+    proxyTargets: ALL_TARGET_NAMES,
+    failureThreshold: config.failureNotificationThreshold,
+    proxyBlockNonessential: config.proxyBlockNonessential,
   };
 }
 
@@ -401,6 +593,7 @@ async function handleRequest(request, response) {
         "/health/app",
         "/health/app-dev",
         "/health/all",
+        "/health/proxy",
       ],
       refreshEndpoints: [
         "POST /run/prod",
@@ -408,10 +601,14 @@ async function handleRequest(request, response) {
         "POST /run/app",
         "POST /run/app-dev",
         "POST /run/all",
+        "POST /run/proxy",
       ],
       notificationTestEndpoint: "POST /notify/test",
       authentication: "Authorization: Bearer <MONITOR_TOKEN>",
       intervalMinutes: config.intervalMs / 60_000,
+      configuredProxies: proxies.length,
+      proxyTargets: ALL_TARGET_NAMES,
+      proxyBlockNonessential: config.proxyBlockNonessential,
       failureNotificationThreshold: config.failureNotificationThreshold,
     });
   }
@@ -427,6 +624,21 @@ async function handleRequest(request, response) {
       sent ? 200 : 502,
     );
   }
+  if (requestUrl.pathname === "/health/proxy") {
+    if (!tokenMatches(bearerToken(request), config.token)) {
+      return sendJson(response, { error: "Unauthorized" }, 401);
+    }
+    const result = proxyHealthResult();
+    return sendJson(response, result, result.ok ? 200 : 503);
+  }
+  if (requestUrl.pathname === "/run/proxy") {
+    if (request.method !== "POST") return sendJson(response, { error: "Use POST" }, 405);
+    if (!tokenMatches(bearerToken(request), config.token)) {
+      return sendJson(response, { error: "Unauthorized" }, 401);
+    }
+    const result = await runFullCycle("http");
+    return sendJson(response, result, result.ok ? 200 : 502);
+  }
   const targetNames = targetsByPath[requestUrl.pathname];
   if (!targetNames) return sendJson(response, { error: "Not found" }, 404);
   if (!tokenMatches(bearerToken(request), config.token)) {
@@ -434,7 +646,9 @@ async function handleRequest(request, response) {
   }
   if (requestUrl.pathname.startsWith("/run/")) {
     if (request.method !== "POST") return sendJson(response, { error: "Use POST" }, 405);
-    const result = await runChecks(targetNames, "http");
+    const result = requestUrl.pathname === "/run/all"
+      ? await runFullCycle("http")
+      : await runChecks(targetNames, "http");
     return sendJson(response, result, result.ok ? 200 : 502);
   }
   const result = healthResult(targetNames);
@@ -449,6 +663,7 @@ async function shutdown(signal) {
 
 validateConfig();
 await loadAlertState();
+
 const server = createServer((request, response) => {
   handleRequest(request, response).catch((error) => {
     log("request_failed", { reason: error.message });
@@ -458,13 +673,25 @@ const server = createServer((request, response) => {
 });
 
 server.listen(config.port, config.host, () => {
-  log("server_started", { host: config.host, port: config.port });
+  log("server_started", {
+    host: config.host,
+    port: config.port,
+    configuredProxies: proxies.length,
+    proxyIntervalMinutes: config.intervalMs / 60_000,
+    failureNotificationThreshold: config.failureNotificationThreshold,
+    proxyBlockNonessential: config.proxyBlockNonessential,
+  });
 });
 
-const allTargets = Object.keys(monitors);
-if (config.checkOnStart) runChecks(allTargets, "startup").catch((error) => log("startup_check_failed", { reason: error.message }));
+if (config.checkOnStart) {
+  runFullCycle("startup").catch((error) =>
+    log("startup_check_failed", { reason: error.message }),
+  );
+}
 setInterval(() => {
-  runChecks(allTargets, "schedule").catch((error) => log("scheduled_check_failed", { reason: error.message }));
+  runFullCycle("schedule").catch((error) =>
+    log("scheduled_check_failed", { reason: error.message }),
+  );
 }, config.intervalMs).unref();
 
 process.on("SIGINT", () => shutdown("SIGINT"));

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jeffrey-spectrio.mpdm-local-dashboard</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE_PATH__</string>
+    <string>--env-file=__PROJECT_PATH__/.env</string>
+    <string>__PROJECT_PATH__/src/dashboard-server.js</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__PROJECT_PATH__</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ProcessType</key><string>Background</string>
+  <key>StandardOutPath</key><string>__PROJECT_PATH__/dashboard.log</string>
+  <key>StandardErrorPath</key><string>__PROJECT_PATH__/dashboard-error.log</string>
+</dict>
+</plist>

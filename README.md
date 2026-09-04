@@ -2,6 +2,8 @@
 
 Runs real MPDM PROD, MPDM DEV, InReality Platform V3, and InReality Platform V3 DEV login checks on a local Mac. A single long-lived Chromium process is reused, and checks run sequentially to reduce startup time and memory usage.
 
+The project also includes a separate public read-only dashboard with a light Apple/iOS-style UI. The monitor itself remains bound to `127.0.0.1`, while the dashboard listens on `0.0.0.0:8788` by default. This keeps the action endpoints and credentials private while allowing LAN or Cloudflare Tunnel access to status data.
+
 ## Requirements
 
 - macOS (Apple silicon or Intel)
@@ -16,58 +18,195 @@ npx playwright install chromium
 cp .env.example .env
 ```
 
-Edit `.env` with the MPDM PROD, MPDM DEV, InReality V3 PROD, and InReality V3 DEV credentials and a long random `MONITOR_TOKEN`, then test:
+Edit `.env` with the MPDM PROD, MPDM DEV, InReality V3 PROD, and InReality V3 DEV credentials and a long random `MONITOR_TOKEN`, then test the monitor:
 
 ```bash
 node --env-file=.env src/index.js
 ```
 
-The service listens on `127.0.0.1:8700` by default. Checks run at startup and every 15 minutes.
+Direct checks run at startup and every 15 minutes by default.
 
 To receive Slack alerts, create a Slack incoming webhook and set it in `.env`:
 
 ```dotenv
-FAILURE_NOTIFICATION_THRESHOLD=2
+FAILURE_NOTIFICATION_THRESHOLD=3
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 ```
 
-Each site is counted independently. An alert is sent after two consecutive failures, only once for the same incident. A recovery message is sent when that site succeeds again. Alert counters survive service restarts.
+Each full monitoring cycle runs the direct network and every configured proxy. Each network tests all four URLs. `FAILURE_NOTIFICATION_THRESHOLD` is the number of failed networks allowed before alerting: with `3`, four or more failures send an alert, while two failures are treated as below threshold and do not send one. A recovery message is sent when a later cycle returns to the threshold or below. Alert state survives service restarts.
 
-## Endpoints
+## Proxy monitoring
 
-All monitor endpoints require `Authorization: Bearer <MONITOR_TOKEN>`.
+Proxy monitoring runs in the same full cycle as direct monitoring. Every configured proxy is tested on every cycle, and every proxy uses the same four-URL login flow as direct monitoring.
 
-```bash
-curl -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8700/health/all
-curl -X POST -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8700/run/all
+Add the following to `.env`:
+
+```dotenv
+PROXY_URL=http://your-vps-proxy.example.com:8000
+PROXY_USERNAME=your-vps-proxy-username
+PROXY_PASSWORD=your-vps-proxy-password
+# Use PROXY_LIST instead of PROXY_URL for multiple VPS proxies.
+# PROXY_LIST=JP-Tokyo=http://proxy1.example.com:8000;UK-London=http://proxy2.example.com:8000;US-Seattle=http://proxy3.example.com:8000
+# Keep false to use the same page-loading behavior as direct checks.
+PROXY_BLOCK_NONESSENTIAL=false
 ```
 
-- `GET /health/prod`, `/health/dev`, `/health/app`, `/health/app-dev`, `/health/all`: return the latest cached result immediately.
-- `POST /run/prod`, `/run/dev`, `/run/app`, `/run/app-dev`, `/run/all`: run a fresh check and return its result.
+Set `PROXY_URL` to the HTTP/SOCKS proxy listener on your VPS. `PROXY_USERNAME` and `PROXY_PASSWORD` are optional and should stay only in `.env`. For multiple VPS proxies, use `PROXY_LIST`; entries can be plain `host:port` values or `Label=host:port`, separated with semicolons or commas.
+
+There is no round-robin skip: every configured proxy runs on every cycle. No extra IP lookup is performed, which keeps proxy execution close to direct execution. Proxy server credentials are redacted from returned results and logs.
+
+Slack alerts use the combined network failure count. For example, with one direct check and four proxies and `FAILURE_NOTIFICATION_THRESHOLD=3`, four or five failed networks trigger an alert; one to three failed networks do not. The alert is grouped by URL, and each URL lists Direct plus every proxy. Failed entries include their reason, and the check timestamp is shown in UTC+8:
+
+```text
+MPDM PROD login check failed
+Direct = Pass
+Proxy: JP-Tokyo = Failure
+Reason: VPS timeout
+Proxy: US-Seattle = Pass
+
+MPDM DEV login check passed
+Direct = Pass
+Proxy: JP-Tokyo = Pass
+Proxy: US-Seattle = Pass
+```
+
+## Monitor endpoints
+
+The monitor listens on `127.0.0.1:8787` by default. All monitor endpoints require `Authorization: Bearer <MONITOR_TOKEN>`.
+
+```bash
+curl -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8787/health/all
+curl -X POST -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8787/run/all
+```
+
+- `GET /health/prod`, `/health/dev`, `/health/app`, `/health/app-dev`, `/health/all`: return the latest cached direct result immediately.
+- `POST /run/prod`, `/run/dev`, `/run/app`, `/run/app-dev`: run a fresh direct check and return its result.
+- `POST /run/all`: run a complete direct-plus-all-proxy cycle and return every result.
+- `GET /health/proxy`: return the latest complete direct-plus-proxy cycle.
+- `POST /run/proxy`: immediately run a complete direct-plus-all-proxy cycle.
 - `POST /notify/test`: send a test message to the configured Slack webhook.
 
-All checks are queued instead of running Chromium sessions concurrently. Both InReality V3 environments use the username, Continue, password, Continue login flow. PROD only succeeds at `https://app.inreality.com/v3/auth0/`; DEV only succeeds at `https://v3-dev.inreality.com/v3/auth0/`. OAuth query parameters are removed from all returned URLs.
+All checks are queued instead of running Chromium sessions concurrently. Direct and proxy checks use the same login flow and all four configured URLs. Both InReality V3 environments use the username, Continue, password, Continue login flow. OAuth query parameters are removed from all returned URLs.
 
-Test Slack after restarting the service:
+## Public read-only dashboard
+
+The dashboard is a separate process. It authenticates to the local monitor internally using `MONITOR_TOKEN`, but does not expose that token or any action endpoint to visitors.
+
+Recommended `.env` settings:
+
+```dotenv
+HOST=127.0.0.1
+PORT=8787
+
+DASHBOARD_HOST=0.0.0.0
+DASHBOARD_PORT=8788
+DASHBOARD_MONITOR_URL=http://127.0.0.1:8787
+DASHBOARD_POLL_INTERVAL_SECONDS=30
+DASHBOARD_HISTORY_LIMIT=500
+DASHBOARD_HISTORY_PATH=data/dashboard-history.json
+```
+
+Start the dashboard manually for testing:
 
 ```bash
-curl -X POST -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8700/notify/test
+node --env-file=.env src/dashboard-server.js
 ```
+
+Open it locally:
+
+```text
+http://127.0.0.1:8788/
+```
+
+From another device on the same LAN, use the Mac's LAN IP:
+
+```text
+http://<MAC-LAN-IP>:8788/
+```
+
+The public dashboard exposes only read-only endpoints:
+
+- `GET /` and `GET /dashboard`: Apple/iOS-style dashboard
+- `GET /health/all`: cached direct status copied from the private monitor
+- `GET /health/proxy`: cached proxy status copied from the private monitor
+- `GET /api/history`: recent direct and proxy results
+- `GET /api/meta`: display metadata such as intervals and proxy count
+
+There are intentionally no public `/run/*` or `/notify/test` routes on port `8788`.
+
+Dashboard history is stored in `data/dashboard-history.json` and capped by `DASHBOARD_HISTORY_LIMIT`. It stores status, timestamps, duration, service names, proxy labels/IPs, and failure reasons; it does not store login credentials.
 
 ## Start automatically on macOS
 
-After the manual test succeeds:
+After manual testing succeeds:
 
 ```bash
 chmod +x install-launchd.sh
 ./install-launchd.sh
 ```
 
-The installer creates a user LaunchAgent that starts after login, restarts after a crash, and writes logs in the project directory.
+The installer now creates two user LaunchAgents:
 
-## Remote access
+- `com.jeffrey-spectrio.mpdm-local-monitor` — private monitor on `127.0.0.1:8787`
+- `com.jeffrey-spectrio.mpdm-local-dashboard` — public read-only dashboard on `0.0.0.0:8788`
 
-The default bind address is local-only. Keep it that way unless access is provided through a protected Cloudflare Tunnel or Tailscale connection. Do not expose the port directly to the internet.
+Both start after login and restart after a crash.
+
+Check them with:
+
+```bash
+launchctl print gui/$(id -u)/com.jeffrey-spectrio.mpdm-local-monitor
+launchctl print gui/$(id -u)/com.jeffrey-spectrio.mpdm-local-dashboard
+```
+
+Logs:
+
+```bash
+tail -f monitor.log
+tail -f dashboard.log
+```
+
+## Cloudflare Tunnel external access
+
+For Internet access, route only the dashboard port through Cloudflare Tunnel. Do not route the private monitor port `8787`.
+
+Install `cloudflared` on macOS:
+
+```bash
+brew install cloudflared
+```
+
+Create/login to a locally managed tunnel using Cloudflare's normal CLI flow, then copy `config/cloudflared.yml.example` to `~/.cloudflared/config.yml` and replace:
+
+- `YOUR_TUNNEL_UUID`
+- `YOUR_MAC_USER`
+- `monitor.example.com`
+
+The important origin line is:
+
+```yaml
+service: http://127.0.0.1:8788
+```
+
+Create the DNS route:
+
+```bash
+cloudflared tunnel route dns <TUNNEL-NAME-OR-UUID> monitor.example.com
+```
+
+Test the tunnel:
+
+```bash
+cloudflared tunnel run <TUNNEL-NAME-OR-UUID>
+```
+
+On macOS, `cloudflared service install` installs it as a user LaunchAgent that starts when you log in. Using `sudo cloudflared service install` installs it as a system LaunchDaemon that starts at boot. See the current Cloudflare Tunnel documentation before installation because service behavior and CLI options can change.
+
+Once configured, the dashboard can be reached externally at:
+
+```text
+https://monitor.example.com/
+```
 
 ## Updating
 
