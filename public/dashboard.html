@@ -50,7 +50,7 @@
 
   <script>
     const labels={prod:'MPDM PROD',dev:'MPDM DEV',app:'InReality V3',appDev:'InReality V3 DEV'};
-    const flags={US:'🇺🇸',JP:'🇯🇵',UK:'🇬🇧',ES:'🇪🇸',PL:'🇵🇱'};
+    const flags={US:'🇺🇸',JP:'🇯🇵',UK:'🇬🇧',SG:'🇸🇬',ES:'🇪🇸',PL:'🇵🇱'};
     const $=id=>document.getElementById(id);let currentView='overview';let cachedHistory=[];
     const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const fmtDuration=ms=>Number.isFinite(Number(ms))?`${(Number(ms)/1000).toFixed(Number(ms)>=10000?1:2)} <small>s</small>`:'—';
