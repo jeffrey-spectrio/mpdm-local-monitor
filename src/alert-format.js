@@ -16,11 +16,38 @@ export function isAlertThresholdExceeded(cycle, failureThreshold) {
   return cycleFailureCount(cycle) > failureThreshold;
 }
 
-function resultLines(label, result, labels) {
-  const lines = [`${label} = ${result?.ok ? "Pass" : "Failure"}`];
-  for (const [name, check] of Object.entries(result?.checks || {})) {
-    const detail = check.ok ? "" : ` — ${check.reason || check.status}`;
-    lines.push(`  ${labels[name] || name}: ${check.ok ? "Pass" : "Failure"}${detail}`);
+function formatCheckedAt(value) {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "Unknown time (UTC+8)";
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Hong_Kong",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(date)
+      .filter(({ type }) => type !== "literal")
+      .map(({ type, value: partValue }) => [type, partValue]),
+  );
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} (UTC+8)`;
+}
+
+function urlResultLines(name, cycle, labels) {
+  const networks = networkResultsForCycle(cycle);
+  const checks = networks.map(({ label, result }) => ({
+    label,
+    check: result?.checks?.[name],
+  }));
+  const failed = checks.some(({ check }) => !check?.ok);
+  const lines = [`${labels[name] || name} login check ${failed ? "failed" : "passed"}`];
+  for (const { label, check } of checks) {
+    lines.push(`${label} = ${check?.ok ? "Pass" : "Failure"}`);
+    if (!check?.ok) lines.push(`Reason: ${check?.reason || check?.status || "Unknown error"}`);
   }
   return lines;
 }
@@ -37,9 +64,11 @@ export function formatCycleAlert(
     title,
     `Network failures: ${failureCount}`,
     `Alert when failures > ${failureThreshold}`,
+    `Checked at: ${formatCheckedAt(cycle.checkedAt)}`,
   ];
-  for (const { label, result } of networkResultsForCycle(cycle)) {
-    lines.push(...resultLines(label, result, labels));
+  const targetNames = Object.keys(cycle.direct?.checks || {});
+  for (const name of targetNames) {
+    lines.push("", ...urlResultLines(name, cycle, labels));
   }
   return lines.join("\n");
 }

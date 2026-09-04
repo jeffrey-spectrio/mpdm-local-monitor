@@ -43,14 +43,35 @@ test("counts direct plus every proxy as one network failure", () => {
 
 test("alert output includes direct, every proxy, and every URL result", () => {
   const cycle = {
-    direct: network("Direct", true),
-    proxyResults: [network("JP-Tokyo", false), network("US-Seattle", true)],
+    checkedAt: "2026-09-04T08:00:00.000Z",
+    direct: {
+      ok: true,
+      checks: {
+        prod: { ok: true },
+        dev: { ok: true },
+        app: { ok: true },
+        appDev: { ok: true },
+      },
+    },
+    proxyResults: [
+      {
+        ...network("JP-Tokyo", false),
+        checks: Object.fromEntries(
+          Object.keys(labels).map((name) => [name, { ok: false, reason: "VPS timeout" }]),
+        ),
+      },
+      network("US-Seattle", true),
+    ],
   };
   const text = formatCycleAlert(cycle, { failureThreshold: 3, labels });
 
+  assert.match(text, /MPDM PROD login check failed/);
   assert.match(text, /Direct = Pass/);
   assert.match(text, /Proxy: JP-Tokyo = Failure/);
+  assert.match(text, /Reason: VPS timeout/);
   assert.match(text, /Proxy: US-Seattle = Pass/);
-  assert.match(text, /MPDM PROD: Failure/);
-  assert.match(text, /InReality V3 DEV: Failure/);
+  assert.match(text, /MPDM DEV login check failed/);
+  assert.match(text, /InReality V3 login check failed/);
+  assert.match(text, /InReality V3 DEV login check failed/);
+  assert.match(text, /Checked at: 2026-09-04 16:00:00 \(UTC\+8\)/);
 });

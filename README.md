@@ -55,7 +55,20 @@ Set `PROXY_URL` to the HTTP/SOCKS proxy listener on your VPS. `PROXY_USERNAME` a
 
 There is no round-robin skip: every configured proxy runs on every cycle. No extra IP lookup is performed, which keeps proxy execution close to direct execution. Proxy server credentials are redacted from returned results and logs.
 
-Slack alerts use the combined network failure count. For example, with one direct check and four proxies and `FAILURE_NOTIFICATION_THRESHOLD=3`, four or five failed networks trigger an alert; one to three failed networks do not. The alert includes Direct and every proxy, with each URL result underneath.
+Slack alerts use the combined network failure count. For example, with one direct check and four proxies and `FAILURE_NOTIFICATION_THRESHOLD=3`, four or five failed networks trigger an alert; one to three failed networks do not. The alert is grouped by URL, and each URL lists Direct plus every proxy. Failed entries include their reason, and the check timestamp is shown in UTC+8:
+
+```text
+MPDM PROD login check failed
+Direct = Pass
+Proxy: JP-Tokyo = Failure
+Reason: VPS timeout
+Proxy: US-Seattle = Pass
+
+MPDM DEV login check passed
+Direct = Pass
+Proxy: JP-Tokyo = Pass
+Proxy: US-Seattle = Pass
+```
 
 ## Monitor endpoints
 
