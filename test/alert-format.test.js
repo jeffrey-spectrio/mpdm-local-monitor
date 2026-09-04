@@ -4,6 +4,7 @@ import {
   cycleFailureCount,
   formatCycleAlert,
   isAlertThresholdExceeded,
+  targetFailureCounts,
 } from "../src/alert-format.js";
 
 const labels = {
@@ -23,22 +24,55 @@ function network(label, ok) {
   };
 }
 
-test("counts direct plus every proxy as one network failure", () => {
+test("counts failures per URL across direct and every proxy", () => {
   const cycle = {
     direct: network("Direct", false),
     proxyResults: [
       network("JP-Tokyo", false),
-      network("UK-London", false),
+      network("UK-London", true),
       network("US-Seattle", true),
-      network("DE-Frankfurt", true),
     ],
   };
 
-  assert.equal(cycleFailureCount(cycle), 3);
-  assert.equal(isAlertThresholdExceeded(cycle, 3), false);
-  cycle.proxyResults[3].ok = false;
-  assert.equal(cycleFailureCount(cycle), 4);
-  assert.equal(isAlertThresholdExceeded(cycle, 3), true);
+  assert.deepEqual(targetFailureCounts(cycle), {
+    prod: 2,
+    dev: 2,
+    app: 2,
+    appDev: 2,
+  });
+  assert.equal(cycleFailureCount(cycle), 8);
+  assert.equal(isAlertThresholdExceeded(cycle, 2), false);
+  cycle.proxyResults[1].checks.prod.ok = false;
+  cycle.proxyResults[1].ok = false;
+  assert.deepEqual(targetFailureCounts(cycle), {
+    prod: 3,
+    dev: 2,
+    app: 2,
+    appDev: 2,
+  });
+  assert.equal(cycleFailureCount(cycle), 9);
+  assert.equal(isAlertThresholdExceeded(cycle, 2), true);
+});
+
+test("does not alert when failures are spread below the per-URL threshold", () => {
+  const cycle = {
+    direct: {
+      checks: {
+        prod: { ok: false },
+        dev: { ok: true },
+        app: { ok: true },
+        appDev: { ok: true },
+      },
+    },
+    proxyResults: [
+      { proxyLabel: "JP-Tokyo", checks: { prod: { ok: true }, dev: { ok: false }, app: { ok: true }, appDev: { ok: true } } },
+      { proxyLabel: "UK-London", checks: { prod: { ok: true }, dev: { ok: true }, app: { ok: false }, appDev: { ok: true } } },
+      { proxyLabel: "US-Seattle", checks: { prod: { ok: true }, dev: { ok: true }, app: { ok: true }, appDev: { ok: true } } },
+    ],
+  };
+
+  assert.deepEqual(targetFailureCounts(cycle), { prod: 1, dev: 1, app: 1, appDev: 0 });
+  assert.equal(isAlertThresholdExceeded(cycle, 2), false);
 });
 
 test("alert output includes direct, every proxy, and every URL result", () => {
@@ -66,7 +100,7 @@ test("alert output includes direct, every proxy, and every URL result", () => {
   };
   const text = formatCycleAlert(cycle, { failureThreshold: 3, labels });
 
-  assert.match(text, /MPDM PROD login check failed/);
+  assert.match(text, /MPDM PROD login check failed — 1\/4 networks failed/);
   assert.match(text, /• Direct = Pass/);
   assert.match(text, /• Proxy: 🇯🇵 JP-Tokyo = Failure/);
   assert.match(text, /↳ Reason: VPS timeout/);
@@ -77,5 +111,5 @@ test("alert output includes direct, every proxy, and every URL result", () => {
   assert.match(text, /InReality V3 DEV login check failed/);
   assert.match(text, /\*Checked at:\* 2026-09-04 16:00:00 \(UTC\+8\)/);
   assert.doesNotMatch(text, /recovered/i);
-  assert.match(text, /\n\n\*MPDM PROD login check failed\*/);
+  assert.match(text, /\n\n\*MPDM PROD login check failed — 1\/4 networks failed\*/);
 });

@@ -5,6 +5,8 @@ import {
   cycleFailureCount,
   formatCycleAlert,
   isAlertThresholdExceeded,
+  networkFailureCount,
+  targetFailureCounts,
 } from "./alert-format.js";
 import { parseProxyList as parseProxyListWithCredentials } from "./proxy-config.js";
 
@@ -493,11 +495,15 @@ async function executeFullCycle(source) {
     proxyResults,
     proxyCount: proxies.length,
     failureCount: 0,
+    networkFailureCount: 0,
+    failureCountsByTarget: {},
     failureThreshold: config.failureNotificationThreshold,
     checkedAt: new Date().toISOString(),
     durationMs: elapsedSince(startedAt),
   };
   cycle.failureCount = cycleFailureCount(cycle);
+  cycle.networkFailureCount = networkFailureCount(cycle);
+  cycle.failureCountsByTarget = targetFailureCounts(cycle);
   cycle.alertThresholdExceeded = isAlertThresholdExceeded(
     cycle,
     config.failureNotificationThreshold,

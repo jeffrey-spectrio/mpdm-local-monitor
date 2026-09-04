@@ -9,11 +9,31 @@ export function networkResultsForCycle(cycle) {
 }
 
 export function cycleFailureCount(cycle) {
+  return Object.values(targetFailureCounts(cycle)).reduce(
+    (total, count) => total + count,
+    0,
+  );
+}
+
+export function networkFailureCount(cycle) {
   return networkResultsForCycle(cycle).filter(({ result }) => !result?.ok).length;
 }
 
+export function targetFailureCounts(cycle) {
+  const networks = networkResultsForCycle(cycle);
+  const targetNames = Object.keys(cycle.direct?.checks || {});
+  return Object.fromEntries(
+    targetNames.map((name) => [
+      name,
+      networks.filter(({ result }) => !result?.checks?.[name]?.ok).length,
+    ]),
+  );
+}
+
 export function isAlertThresholdExceeded(cycle, failureThreshold) {
-  return cycleFailureCount(cycle) > failureThreshold;
+  return Object.values(targetFailureCounts(cycle)).some(
+    (count) => count > failureThreshold,
+  );
 }
 
 function formatCheckedAt(value) {
@@ -59,8 +79,12 @@ function urlResultLines(name, cycle, labels) {
     label,
     check: result?.checks?.[name],
   }));
-  const failed = checks.some(({ check }) => !check?.ok);
-  const lines = [`*${labels[name] || name} login check ${failed ? "failed" : "passed"}*`];
+  const failedCount = checks.filter(({ check }) => !check?.ok).length;
+  const totalCount = checks.length;
+  const failed = failedCount > 0;
+  const lines = [
+    `*${labels[name] || name} login check ${failed ? "failed" : "passed"} — ${failedCount}/${totalCount} networks failed*`,
+  ];
   for (const { label, check } of checks) {
     lines.push(`• ${formatNetworkLabel(label)} = ${check?.ok ? "Pass" : "Failure"}`);
     if (!check?.ok) {
@@ -71,12 +95,16 @@ function urlResultLines(name, cycle, labels) {
 }
 
 export function formatCycleAlert(cycle, { failureThreshold, labels = {} }) {
-  const failureCount = cycleFailureCount(cycle);
+  const failureCounts = targetFailureCounts(cycle);
+  const networks = networkResultsForCycle(cycle);
+  const triggeredTargets = Object.entries(failureCounts)
+    .filter(([, count]) => count > failureThreshold)
+    .map(([name, count]) => `${labels[name] || name} (${count}/${networks.length})`);
   const lines = [
     ":rotating_light: *Monitor failure alert*",
     "",
-    `*Network failures:* ${failureCount}`,
-    `*Alert when failures >:* ${failureThreshold}`,
+    `*Alert rule:* any URL with more than ${failureThreshold} failed networks`,
+    `*Triggered by:* ${triggeredTargets.join(", ") || "none"}`,
     `*Checked at:* ${formatCheckedAt(cycle.checkedAt)}`,
   ];
   const targetNames = Object.keys(cycle.direct?.checks || {});

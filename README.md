@@ -33,7 +33,7 @@ FAILURE_NOTIFICATION_THRESHOLD=2
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 ```
 
-Each full monitoring cycle runs the direct network and every configured proxy in parallel. Each network tests all four URLs sequentially. `FAILURE_NOTIFICATION_THRESHOLD` is the number of failed networks allowed before alerting: with `2`, three or more failures send an alert, while two or fewer failures do not. Every cycle above the threshold sends an alert; recovery does not send a separate message.
+Each full monitoring cycle runs the direct network and every configured proxy in parallel. Each network tests all four URLs sequentially. `FAILURE_NOTIFICATION_THRESHOLD` is evaluated separately for each URL: with `2`, an alert is sent when the same URL fails on three or more networks, while one or two failures for each URL do not trigger an alert. Every cycle above the threshold sends an alert; recovery does not send a separate message.
 
 ## Proxy monitoring
 
@@ -61,7 +61,7 @@ There is no round-robin skip: every configured proxy runs on every cycle. Direct
 
 Proxy page and login waits use `PROXY_TIMEOUT_MS` (60 seconds by default); direct checks keep their existing timeouts. Increase this value if a proxy is consistently slower, for example `PROXY_TIMEOUT_MS=90000`.
 
-Slack alerts use the combined network failure count. For example, with one direct check and four proxies and `FAILURE_NOTIFICATION_THRESHOLD=2`, three to five failed networks trigger an alert; zero to two failed networks do not. Every cycle that exceeds the threshold sends an alert. The alert is grouped by URL, and each URL lists Direct plus every proxy. Failed entries include their reason, and the check timestamp is shown in UTC+8:
+Slack alerts count failures separately for each URL. For example, with one direct check and four proxies and `FAILURE_NOTIFICATION_THRESHOLD=2`, three to five failures for the same URL trigger an alert; one or two failures for each URL do not. Every cycle that exceeds the threshold sends an alert. The alert is grouped by URL, each section shows its failed-network count, and each URL lists Direct plus every proxy. Failed entries include their reason, and the check timestamp is shown in UTC+8:
 
 ```text
 MPDM PROD login check failed
