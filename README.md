@@ -59,7 +59,7 @@ Set `PROXY_URL` for one proxy, or set `PROXY_LIST` for multiple proxies. Each `P
 
 There is no round-robin skip: every configured proxy runs on every cycle. Direct and proxy networks run in parallel, while each network checks its four URLs sequentially. No extra IP lookup is performed, which keeps proxy execution close to direct execution. Proxy server credentials are redacted from returned results and logs.
 
-Proxy page and login waits use `PROXY_TIMEOUT_MS` (60 seconds by default); direct checks keep their existing timeouts. Increase this value if a proxy is consistently slower, for example `PROXY_TIMEOUT_MS=90000`.
+Proxy page and login waits use `PROXY_TIMEOUT_MS` (90 seconds by default); direct checks keep their existing timeouts. Increase this value if a proxy is consistently slower.
 
 Slack alerts count failures separately for each URL. For example, with one direct check and four proxies and `FAILURE_NOTIFICATION_THRESHOLD=2`, three to five failures for the same URL trigger an alert; one or two failures for each URL do not. Every cycle that exceeds the threshold sends an alert. The alert includes only the URL sections that exceeded the threshold; each included URL shows Direct plus every proxy and failed-entry reasons. The check timestamp is shown in UTC+8:
 

@@ -66,11 +66,16 @@ const proxyFlags = {
   PL: "🇵🇱",
 };
 
+const proxyCityFlags = {
+  Paris: "🇫🇷",
+};
+
 function formatNetworkLabel(label) {
   if (!label.startsWith("Proxy: ")) return label;
   const proxyLabel = label.slice("Proxy: ".length);
-  const countryCode = proxyLabel.split("-")[0].toUpperCase();
-  return `Proxy: ${proxyFlags[countryCode] || "🌐"} ${proxyLabel}`;
+  const [countryOrCode, city] = proxyLabel.split("-");
+  const countryCode = countryOrCode.toUpperCase();
+  return `Proxy: ${proxyFlags[countryCode] || proxyCityFlags[city] || "🌐"} ${proxyLabel}`;
 }
 
 function urlResultLines(name, cycle, labels) {

@@ -51,13 +51,14 @@
   <script>
     const labels={prod:'MPDM PROD',dev:'MPDM DEV',app:'InReality V3',appDev:'InReality V3 DEV'};
     const flags={US:'🇺🇸',JP:'🇯🇵',UK:'🇬🇧',SG:'🇸🇬',ES:'🇪🇸',PL:'🇵🇱'};
+    const cityFlags={Paris:'🇫🇷'};
     const $=id=>document.getElementById(id);let currentView='overview';let cachedHistory=[];
     const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const fmtDuration=ms=>Number.isFinite(Number(ms))?`${(Number(ms)/1000).toFixed(Number(ms)>=10000?1:2)} <small>s</small>`:'—';
     const fmtTime=v=>{if(!v)return '—';const d=new Date(v);return d.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});};
     const fmtClock=v=>{if(!v)return '—';const d=new Date(v);if(Number.isNaN(d.getTime()))return '—';const tomorrow=d.toDateString()!==new Date().toDateString();return `${tomorrow?'Tomorrow ':''}${d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}`;};
     const relative=v=>{if(!v)return 'Not checked yet';const s=Math.max(0,Math.round((Date.now()-new Date(v).getTime())/1000));if(s<60)return `${s}s ago`;if(s<3600)return `${Math.floor(s/60)}m ago`;if(s<86400)return `${Math.floor(s/3600)}h ago`;return `${Math.floor(s/86400)}d ago`;};
-    const prettyProxy=v=>{if(!v)return 'Proxy';const country=String(v).split('-')[0];return `${flags[country]||'🌐'} ${String(v).replaceAll('-',' · ')}`;};
+    const prettyProxy=v=>{if(!v)return 'Proxy';const parts=String(v).split('-');const country=parts[0];const city=parts[1];return `${flags[country]||cityFlags[city]||'🌐'} ${String(v).replaceAll('-',' · ')}`;};
     const badge=r=>!r?'<span class="badge wait">WAIT</span>':r.ok?'<span class="badge">PASS</span>':'<span class="badge fail">FAIL</span>';
     const card=(name,r,detail='')=>`<article class="card${r&&!r.ok?' fail-card':''}"><div class="service-top"><div class="service-name">${esc(labels[name]||name||r?.service||'—')}</div>${badge(r)}</div><div class="duration">${fmtDuration(r?.durationMs)}</div><div class="checked">${esc(detail||relative(r?.checkedAt))}</div></article>`;
     function renderDirect(data){const checks=data?.checks||{};$('directGrid').innerHTML=['prod','dev','app','appDev'].map(n=>card(n,checks[n])).join('');const newest=Object.values(checks).filter(Boolean).map(x=>x.checkedAt).sort().at(-1);$('directStamp').textContent=newest?`Updated ${relative(newest)}`:'Not checked yet';}

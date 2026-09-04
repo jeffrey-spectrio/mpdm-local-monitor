@@ -118,6 +118,20 @@ test("alert output includes every network result for triggering URL only", () =>
   assert.match(text, /↳ Reason: VPS timeout/);
   assert.match(text, /• Proxy: 🇺🇸 US-Seattle = Failure/);
   assert.match(text, /• Proxy: 🇸🇬 SG-Singapore-Oracle = Pass/);
+  const parisText = formatCycleAlert(
+    {
+      checkedAt: "2026-09-04T08:00:00.000Z",
+      direct: { checks: { prod: { ok: true } } },
+      proxyResults: [
+        {
+          proxyLabel: "PG-Paris-AWS",
+          checks: { prod: { ok: false, reason: "timeout" } },
+        },
+      ],
+    },
+    { failureThreshold: 0, labels: { prod: "MPDM PROD" } },
+  );
+  assert.match(parisText, /• Proxy: 🇫🇷 PG-Paris-AWS = Failure/);
   assert.doesNotMatch(text, /MPDM DEV login check/);
   assert.doesNotMatch(text, /InReality V3 login check/);
   assert.doesNotMatch(text, /InReality V3 DEV login check/);
