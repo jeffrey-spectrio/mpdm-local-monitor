@@ -29,34 +29,33 @@ Direct checks run at startup and every 15 minutes by default.
 To receive Slack alerts, create a Slack incoming webhook and set it in `.env`:
 
 ```dotenv
-FAILURE_NOTIFICATION_THRESHOLD=2
+FAILURE_NOTIFICATION_THRESHOLD=3
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 ```
 
-Each direct site is counted independently. An alert is sent after two consecutive failures, only once for the same incident. A recovery message is sent when that site succeeds again. Alert counters survive service restarts.
+Each full monitoring cycle runs the direct network and every configured proxy. Each network tests all four URLs. `FAILURE_NOTIFICATION_THRESHOLD` is the number of failed networks allowed before alerting: with `3`, four or more failures send an alert, while two failures are treated as below threshold and do not send one. A recovery message is sent when a later cycle returns to the threshold or below. Alert state survives service restarts.
 
-## Optional proxy rotation
+## Proxy monitoring
 
-Proxy monitoring is separate from the normal direct checks. It uses one proxy per cycle and rotates through the configured proxy list in order. By default it runs every 120 minutes and checks only MPDM PROD (`prod`) and InReality V3 PROD (`app`).
+Proxy monitoring runs in the same full cycle as direct monitoring. Every configured proxy is tested on every cycle, and every proxy uses the same four-URL login flow as direct monitoring.
 
 Add the following to `.env`:
 
 ```dotenv
-PROXY_CHECK_INTERVAL_MINUTES=120
-PROXY_CHECK_ON_START=false
-PROXY_FAILURE_NOTIFICATION_THRESHOLD=1
-PROXY_TARGETS=prod,app
-PROXY_USERNAME=your-webshare-username
-PROXY_PASSWORD=your-webshare-password
-PROXY_LIST=US-Seattle=http://proxy1.example.com:8000;JP-Tokyo=http://proxy2.example.com:8000;UK-London-1=http://proxy3.example.com:8000;UK-London-2=http://proxy4.example.com:8000
-PROXY_IP_CHECK_URL=https://ipv4.webshare.io/
+PROXY_URL=http://your-vps-proxy.example.com:8000
+PROXY_USERNAME=your-vps-proxy-username
+PROXY_PASSWORD=your-vps-proxy-password
+# Use PROXY_LIST instead of PROXY_URL for multiple VPS proxies.
+# PROXY_LIST=JP-Tokyo=http://proxy1.example.com:8000;UK-London=http://proxy2.example.com:8000;US-Seattle=http://proxy3.example.com:8000
+# Keep false to use the same page-loading behavior as direct checks.
+PROXY_BLOCK_NONESSENTIAL=false
 ```
 
-`PROXY_LIST` entries can be plain `host:port` values or `Label=host:port`. Separate entries with semicolons or commas. Put the provider's official location directly in each label, for example `US-Seattle`, `JP-Tokyo`, or `UK-London-1`. If multiple proxies share the same city, append `-1`, `-2`, and so on. Keep proxy credentials only in `.env`; never commit them.
+Set `PROXY_URL` to the HTTP/SOCKS proxy listener on your VPS. `PROXY_USERNAME` and `PROXY_PASSWORD` are optional and should stay only in `.env`. For multiple VPS proxies, use `PROXY_LIST`; entries can be plain `host:port` values or `Label=host:port`, separated with semicolons or commas.
 
-The round-robin position is saved in `data/proxy-state.json`, so restarting the service does not reset rotation to the first proxy. Before each proxy login cycle, the monitor attempts to retrieve the proxy exit IPv4 address and includes it in the result.
+There is no round-robin skip: every configured proxy runs on every cycle. No extra IP lookup is performed, which keeps proxy execution close to direct execution. Proxy server credentials are redacted from returned results and logs.
 
-Proxy alerts use a shared state per service instead of per proxy. With `PROXY_FAILURE_NOTIFICATION_THRESHOLD=1`, every failing proxy check sends an alert. The next successful proxy check for the same service sends the recovery notification even if it uses a different region.
+Slack alerts use the combined network failure count. For example, with one direct check and four proxies and `FAILURE_NOTIFICATION_THRESHOLD=3`, four or five failed networks trigger an alert; one to three failed networks do not. The alert includes Direct and every proxy, with each URL result underneath.
 
 ## Monitor endpoints
 
@@ -68,12 +67,13 @@ curl -X POST -H "Authorization: Bearer $MONITOR_TOKEN" http://127.0.0.1:8787/run
 ```
 
 - `GET /health/prod`, `/health/dev`, `/health/app`, `/health/app-dev`, `/health/all`: return the latest cached direct result immediately.
-- `POST /run/prod`, `/run/dev`, `/run/app`, `/run/app-dev`, `/run/all`: run a fresh direct check and return its result.
-- `GET /health/proxy`: return the latest proxy-cycle result and which proxy is next.
-- `POST /run/proxy`: immediately run the next configured proxy against `PROXY_TARGETS`, then advance the round-robin position.
+- `POST /run/prod`, `/run/dev`, `/run/app`, `/run/app-dev`: run a fresh direct check and return its result.
+- `POST /run/all`: run a complete direct-plus-all-proxy cycle and return every result.
+- `GET /health/proxy`: return the latest complete direct-plus-proxy cycle.
+- `POST /run/proxy`: immediately run a complete direct-plus-all-proxy cycle.
 - `POST /notify/test`: send a test message to the configured Slack webhook.
 
-All checks are queued instead of running Chromium sessions concurrently. Both InReality V3 environments use the username, Continue, password, Continue login flow. OAuth query parameters are removed from all returned URLs.
+All checks are queued instead of running Chromium sessions concurrently. Direct and proxy checks use the same login flow and all four configured URLs. Both InReality V3 environments use the username, Continue, password, Continue login flow. OAuth query parameters are removed from all returned URLs.
 
 ## Public read-only dashboard
 

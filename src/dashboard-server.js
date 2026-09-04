@@ -7,6 +7,13 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
 const dashboardStartedAt = Date.now();
 
+function configuredProxyCount() {
+  const proxyList =
+    process.env.PROXY_LIST ||
+    (process.env.PROXY_URL ? `VPS=${process.env.PROXY_URL}` : "");
+  return proxyList.split(/[;,\n]+/).filter((item) => item.trim()).length;
+}
+
 const config = {
   host: process.env.DASHBOARD_HOST || "0.0.0.0",
   port: Number.parseInt(process.env.DASHBOARD_PORT || "8788", 10),
@@ -17,7 +24,7 @@ const config = {
   historyLimit: Number.parseInt(process.env.DASHBOARD_HISTORY_LIMIT || "500", 10),
   pollIntervalMs: Number.parseFloat(process.env.DASHBOARD_POLL_INTERVAL_SECONDS || "30") * 1000,
   directIntervalMinutes: Number.parseFloat(process.env.CHECK_INTERVAL_MINUTES || "15"),
-  proxyIntervalMinutes: Number.parseFloat(process.env.PROXY_CHECK_INTERVAL_MINUTES || "120"),
+  proxyIntervalMinutes: Number.parseFloat(process.env.CHECK_INTERVAL_MINUTES || "15"),
 };
 
 const dashboardPath = resolve(projectRoot, "public/dashboard.html");
@@ -149,8 +156,13 @@ async function refreshSnapshots() {
     for (const [name, result] of Object.entries(direct.checks || {})) {
       changed = addHistory(historyItem(name, result)) || changed;
     }
-    for (const [name, result] of Object.entries(proxy.checks || {})) {
-      changed = addHistory(historyItem(name, result)) || changed;
+    const proxyResults = Array.isArray(proxy.proxyResults)
+      ? proxy.proxyResults
+      : [proxy];
+    for (const proxyResult of proxyResults) {
+      for (const [name, result] of Object.entries(proxyResult.checks || {})) {
+        changed = addHistory(historyItem(name, result)) || changed;
+      }
     }
     if (changed) await saveHistory();
   } catch (error) {
@@ -218,7 +230,7 @@ const server = createServer((request, response) => {
       readOnly: true,
       intervalMinutes: config.directIntervalMinutes,
       proxyIntervalMinutes: config.proxyIntervalMinutes,
-      configuredProxies: (process.env.PROXY_LIST || "").split(/[;,\n]+/).filter((item) => item.trim()).length,
+      configuredProxies: configuredProxyCount(),
       historyLimit: config.historyLimit,
       directLastCheckedAt: directLastCheckedAt ? new Date(directLastCheckedAt).toISOString() : null,
       proxyLastCheckedAt: proxyLastCheckedAt ? new Date(proxyLastCheckedAt).toISOString() : null,

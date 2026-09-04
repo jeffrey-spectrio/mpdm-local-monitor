@@ -3,11 +3,18 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { dirname } from "node:path";
 import { chromium } from "playwright";
+import {
+  cycleFailureCount,
+  formatCycleAlert,
+  isAlertThresholdExceeded,
+} from "./alert-format.js";
 
 const JSON_HEADERS = {
   "cache-control": "no-store",
   "content-type": "application/json; charset=utf-8",
 };
+
+const ALL_TARGET_NAMES = ["prod", "dev", "app", "appDev"];
 
 function splitList(value) {
   return (value || "")
@@ -20,6 +27,17 @@ function normalizeProxyServer(value) {
   return /^[a-z]+:\/\//i.test(value) ? value : `http://${value}`;
 }
 
+function displayProxyServer(value) {
+  try {
+    const url = new URL(value);
+    url.username = "";
+    url.password = "";
+    return url.href;
+  } catch {
+    return value;
+  }
+}
+
 function parseProxyList(value) {
   return splitList(value).map((entry, index) => {
     const equalsIndex = entry.indexOf("=");
@@ -27,7 +45,7 @@ function parseProxyList(value) {
     const rawServer = equalsIndex > 0 ? entry.slice(equalsIndex + 1).trim() : entry;
     const server = normalizeProxyServer(rawServer);
     const id = createHash("sha256").update(server).digest("hex").slice(0, 10);
-    return { id, label, server };
+    return { id, label, server, displayServer: displayProxyServer(server) };
   });
 }
 
@@ -39,27 +57,21 @@ const config = {
   checkOnStart: process.env.CHECK_ON_START !== "false",
   headless: process.env.HEADLESS !== "false",
   failureNotificationThreshold: Number.parseInt(
-    process.env.FAILURE_NOTIFICATION_THRESHOLD || "2",
-    10,
-  ),
-  proxyFailureNotificationThreshold: Number.parseInt(
-    process.env.PROXY_FAILURE_NOTIFICATION_THRESHOLD || "1",
+    process.env.FAILURE_NOTIFICATION_THRESHOLD || "3",
     10,
   ),
   slackWebhookUrl: process.env.SLACK_WEBHOOK_URL || "",
   alertStatePath: process.env.ALERT_STATE_PATH || "data/alert-state.json",
-  proxyCheckIntervalMs:
-    Number.parseFloat(process.env.PROXY_CHECK_INTERVAL_MINUTES || "120") * 60_000,
-  proxyCheckOnStart: process.env.PROXY_CHECK_ON_START === "true",
   proxyUsername: process.env.PROXY_USERNAME || "",
   proxyPassword: process.env.PROXY_PASSWORD || "",
-  proxyStatePath: process.env.PROXY_STATE_PATH || "data/proxy-state.json",
-  proxyIpCheckUrl: process.env.PROXY_IP_CHECK_URL || "https://ipv4.webshare.io/",
-  proxyTargetNames: splitList(process.env.PROXY_TARGETS || "prod,app"),
-  proxyBlockNonessential: process.env.PROXY_BLOCK_NONESSENTIAL !== "false",
+  proxyBlockNonessential: process.env.PROXY_BLOCK_NONESSENTIAL === "true",
 };
 
-const proxies = parseProxyList(process.env.PROXY_LIST || "");
+const proxyListValue =
+  process.env.PROXY_URL
+    ? `VPS=${process.env.PROXY_URL}`
+    : process.env.PROXY_LIST || "";
+const proxies = parseProxyList(proxyListValue);
 const PROXY_BLOCKED_RESOURCE_TYPES = new Set(["image", "media", "font", "stylesheet"]);
 const PROXY_BLOCKED_HOSTNAMES = new Set([
   "www.googletagmanager.com",
@@ -113,10 +125,7 @@ let browser;
 let checkQueue = Promise.resolve();
 const latest = Object.fromEntries(Object.keys(monitors).map((name) => [name, null]));
 let latestProxyCycle = null;
-let alertState = Object.fromEntries(
-  Object.keys(monitors).map((name) => [name, { consecutiveFailures: 0, alertSent: false }]),
-);
-let proxyState = { nextIndex: 0 };
+let alertState = { aggregate: { alertSent: false } };
 
 function elapsedSince(startedAt) {
   return Date.now() - startedAt;
@@ -170,27 +179,20 @@ function validateConfig() {
   if (!Number.isFinite(config.intervalMs) || config.intervalMs < 60_000) {
     throw new Error("CHECK_INTERVAL_MINUTES must be at least 1");
   }
-  if (!Number.isFinite(config.proxyCheckIntervalMs) || config.proxyCheckIntervalMs < 60_000) {
-    throw new Error("PROXY_CHECK_INTERVAL_MINUTES must be at least 1");
-  }
-  if (!Number.isInteger(config.failureNotificationThreshold) || config.failureNotificationThreshold < 1) {
-    throw new Error("FAILURE_NOTIFICATION_THRESHOLD must be at least 1");
-  }
-  if (!Number.isInteger(config.proxyFailureNotificationThreshold) || config.proxyFailureNotificationThreshold < 1) {
-    throw new Error("PROXY_FAILURE_NOTIFICATION_THRESHOLD must be at least 1");
+  if (!Number.isInteger(config.failureNotificationThreshold) || config.failureNotificationThreshold < 0) {
+    throw new Error("FAILURE_NOTIFICATION_THRESHOLD must be a non-negative integer");
   }
   if (config.slackWebhookUrl && !config.slackWebhookUrl.startsWith("https://")) {
     throw new Error("SLACK_WEBHOOK_URL must use HTTPS");
-  }
-  for (const name of config.proxyTargetNames) {
-    if (!monitors[name]) throw new Error(`Unknown PROXY_TARGETS entry: ${name}`);
   }
 }
 
 async function loadAlertState() {
   try {
     const stored = JSON.parse(await readFile(config.alertStatePath, "utf8"));
-    alertState = { ...alertState, ...stored };
+    if (stored.aggregate && typeof stored.aggregate === "object") {
+      alertState.aggregate = { ...alertState.aggregate, ...stored.aggregate };
+    }
   } catch (error) {
     if (error.code !== "ENOENT") log("alert_state_load_failed", { reason: error.message });
   }
@@ -199,20 +201,6 @@ async function loadAlertState() {
 async function saveAlertState() {
   await mkdir(dirname(config.alertStatePath), { recursive: true });
   await writeFile(config.alertStatePath, `${JSON.stringify(alertState, null, 2)}\n`);
-}
-
-async function loadProxyState() {
-  try {
-    const stored = JSON.parse(await readFile(config.proxyStatePath, "utf8"));
-    if (Number.isInteger(stored.nextIndex) && stored.nextIndex >= 0) proxyState = stored;
-  } catch (error) {
-    if (error.code !== "ENOENT") log("proxy_state_load_failed", { reason: error.message });
-  }
-}
-
-async function saveProxyState() {
-  await mkdir(dirname(config.proxyStatePath), { recursive: true });
-  await writeFile(config.proxyStatePath, `${JSON.stringify(proxyState, null, 2)}\n`);
 }
 
 async function sendSlack(text) {
@@ -236,47 +224,28 @@ async function sendSlack(text) {
   }
 }
 
-function alertStateFor(key) {
-  if (!alertState[key]) alertState[key] = { consecutiveFailures: 0, alertSent: false };
-  return alertState[key];
+function cycleAlertText(cycle, recovered = false) {
+  return formatCycleAlert(cycle, {
+    failureThreshold: config.failureNotificationThreshold,
+    labels: Object.fromEntries(
+      Object.entries(monitors).map(([name, monitor]) => [name, monitor.label]),
+    ),
+    recovered,
+  });
 }
 
-function networkDescription(result) {
-  if (result.network !== "proxy") return "Direct";
-  return `${result.proxyLabel || "Proxy"}${result.exitIp ? ` (${result.exitIp})` : ""}`;
-}
-
-async function updateAlertState(
-  name,
-  result,
-  key = name,
-  threshold = config.failureNotificationThreshold,
-  { repeatFailureAlerts = false } = {},
-) {
-  const state = alertStateFor(key);
-  const network = networkDescription(result);
-  if (result.ok) {
-    if (state.alertSent) {
-      const sent = await sendSlack(
-        `:white_check_mark: ${monitors[name].label} recovered\n` +
-          `Network: ${network}\n` +
-          `Login succeeded in ${result.durationMs} ms\n${result.finalUrl || ""}`,
-      );
-      if (sent) state.alertSent = false;
-    }
-    state.consecutiveFailures = 0;
-  } else {
-    state.consecutiveFailures += 1;
-    if (state.consecutiveFailures >= threshold && (!state.alertSent || repeatFailureAlerts)) {
-      const sent = await sendSlack(
-        `:rotating_light: ${monitors[name].label} login check failed ` +
-          `${state.consecutiveFailures} time${state.consecutiveFailures === 1 ? "" : "s"} consecutively\n` +
-          `Network: ${network}\n` +
-          `Reason: ${result.reason || result.status}\n` +
-          `Checked: ${result.checkedAt}`,
-      );
-      if (sent) state.alertSent = true;
-    }
+async function updateCycleAlert(cycle) {
+  const state = alertState.aggregate;
+  const exceeded = isAlertThresholdExceeded(
+    cycle,
+    config.failureNotificationThreshold,
+  );
+  if (exceeded && !state.alertSent) {
+    const sent = await sendSlack(cycleAlertText(cycle));
+    if (sent) state.alertSent = true;
+  } else if (!exceeded && state.alertSent) {
+    const sent = await sendSlack(cycleAlertText(cycle, true));
+    if (sent) state.alertSent = false;
   }
   await saveAlertState().catch((error) => {
     log("alert_state_save_failed", { reason: error.message });
@@ -325,22 +294,6 @@ async function enableProxyRequestFiltering(context, stats) {
     }
     await route.continue();
   });
-}
-
-async function resolveProxyExitIp(proxy) {
-  let context;
-  try {
-    const activeBrowser = await getBrowser();
-    context = await activeBrowser.newContext(contextOptionsFor(proxy));
-    const page = await context.newPage();
-    await page.goto(config.proxyIpCheckUrl, { timeout: 20_000, waitUntil: "domcontentloaded" });
-    return (await page.locator("body").innerText()).trim().split(/\s+/)[0] || undefined;
-  } catch (error) {
-    log("proxy_ip_check_failed", { proxy: proxy.label, reason: error.message });
-    return undefined;
-  } finally {
-    await context?.close().catch(() => {});
-  }
 }
 
 async function completeMpdmLogin(page, monitor, timings) {
@@ -420,7 +373,7 @@ async function checkSite(name, source, network = {}) {
         ? {
             proxyId: network.proxy.id,
             proxyLabel: network.proxy.label,
-            proxyServer: network.proxy.server,
+            proxyServer: network.proxy.displayServer,
             blockedRequests: stats.blockedRequests,
             postLoginBlockedRequests: stats.postLoginBlockedRequests,
             ...(network.exitIp ? { exitIp: network.exitIp } : {}),
@@ -458,7 +411,7 @@ async function checkSite(name, source, network = {}) {
         ? {
             proxyId: network.proxy.id,
             proxyLabel: network.proxy.label,
-            proxyServer: network.proxy.server,
+            proxyServer: network.proxy.displayServer,
             blockedRequests: stats.blockedRequests,
             postLoginBlockedRequests: stats.postLoginBlockedRequests,
             ...(network.exitIp ? { exitIp: network.exitIp } : {}),
@@ -497,14 +450,6 @@ async function executeChecks(targetNames, source, network = {}) {
   const checks = {};
   for (const name of targetNames) {
     checks[name] = await checkSite(name, source, network);
-    const isProxy = Boolean(network.proxy);
-    const alertKey = isProxy ? `${name}:proxy` : name;
-    const threshold = isProxy
-      ? config.proxyFailureNotificationThreshold
-      : config.failureNotificationThreshold;
-    await updateAlertState(name, checks[name], alertKey, threshold, {
-      repeatFailureAlerts: isProxy,
-    });
   }
   const ok = targetNames.every((name) => checks[name].ok);
   return {
@@ -517,7 +462,7 @@ async function executeChecks(targetNames, source, network = {}) {
       ? {
           proxyId: network.proxy.id,
           proxyLabel: network.proxy.label,
-          proxyServer: network.proxy.server,
+          proxyServer: network.proxy.displayServer,
           blockedRequests: Object.values(checks).reduce(
             (total, result) => total + (result.blockedRequests || 0),
             0,
@@ -545,33 +490,45 @@ function runChecks(targetNames, source) {
   return enqueue(() => executeChecks(targetNames, source));
 }
 
-async function runNextProxyChecks(source) {
-  if (!proxies.length) {
-    return {
-      ok: false,
-      service: "proxy-monitor",
-      status: "proxy_not_configured",
-      source,
-      checkedAt: new Date().toISOString(),
-    };
+async function executeFullCycle(source) {
+  const startedAt = Date.now();
+  const direct = await executeChecks(ALL_TARGET_NAMES, source);
+  const proxyResults = [];
+  for (const proxy of proxies) {
+    proxyResults.push(await executeChecks(ALL_TARGET_NAMES, source, { proxy }));
   }
-  const index = proxyState.nextIndex % proxies.length;
-  const proxy = proxies[index];
-  proxyState.nextIndex = (index + 1) % proxies.length;
-  await saveProxyState().catch((error) => {
-    log("proxy_state_save_failed", { reason: error.message });
-  });
-  return enqueue(async () => {
-    const exitIp = await resolveProxyExitIp(proxy);
-    const result = await executeChecks(config.proxyTargetNames, source, { proxy, exitIp });
-    latestProxyCycle = {
-      ...result,
-      proxyIndex: index + 1,
-      proxyCount: proxies.length,
-      nextProxyLabel: proxies[proxyState.nextIndex % proxies.length]?.label,
-    };
-    return latestProxyCycle;
-  });
+
+  const cycle = {
+    ok: [direct, ...proxyResults].every((result) => result.ok),
+    service: "monitor-cycle",
+    status: "cycle_completed",
+    source,
+    network: "combined",
+    direct,
+    proxyResults,
+    proxyCount: proxies.length,
+    failureCount: 0,
+    failureThreshold: config.failureNotificationThreshold,
+    checkedAt: new Date().toISOString(),
+    durationMs: elapsedSince(startedAt),
+  };
+  cycle.failureCount = cycleFailureCount(cycle);
+  cycle.alertThresholdExceeded = isAlertThresholdExceeded(
+    cycle,
+    config.failureNotificationThreshold,
+  );
+  cycle.status = cycle.alertThresholdExceeded
+    ? "alert_threshold_exceeded"
+    : cycle.failureCount
+      ? "failures_below_alert_threshold"
+      : "all_checks_succeeded";
+  latestProxyCycle = cycle;
+  await updateCycleAlert(cycle);
+  return cycle;
+}
+
+function runFullCycle(source) {
+  return enqueue(() => executeFullCycle(source));
 }
 
 function healthResult(targetNames) {
@@ -601,9 +558,9 @@ function proxyHealthResult() {
     service: "proxy-monitor",
     status: proxies.length ? "not_checked_yet" : "proxy_not_configured",
     configuredProxies: proxies.length,
-    proxyTargets: config.proxyTargetNames,
+    proxyTargets: ALL_TARGET_NAMES,
+    failureThreshold: config.failureNotificationThreshold,
     proxyBlockNonessential: config.proxyBlockNonessential,
-    nextProxyLabel: proxies[proxyState.nextIndex % Math.max(proxies.length, 1)]?.label,
   };
 }
 
@@ -649,12 +606,10 @@ async function handleRequest(request, response) {
       notificationTestEndpoint: "POST /notify/test",
       authentication: "Authorization: Bearer <MONITOR_TOKEN>",
       intervalMinutes: config.intervalMs / 60_000,
-      proxyIntervalMinutes: config.proxyCheckIntervalMs / 60_000,
       configuredProxies: proxies.length,
-      proxyTargets: config.proxyTargetNames,
+      proxyTargets: ALL_TARGET_NAMES,
       proxyBlockNonessential: config.proxyBlockNonessential,
       failureNotificationThreshold: config.failureNotificationThreshold,
-      proxyFailureNotificationThreshold: config.proxyFailureNotificationThreshold,
     });
   }
   if (requestUrl.pathname === "/notify/test") {
@@ -681,7 +636,7 @@ async function handleRequest(request, response) {
     if (!tokenMatches(bearerToken(request), config.token)) {
       return sendJson(response, { error: "Unauthorized" }, 401);
     }
-    const result = await runNextProxyChecks("http");
+    const result = await runFullCycle("http");
     return sendJson(response, result, result.ok ? 200 : 502);
   }
   const targetNames = targetsByPath[requestUrl.pathname];
@@ -691,7 +646,9 @@ async function handleRequest(request, response) {
   }
   if (requestUrl.pathname.startsWith("/run/")) {
     if (request.method !== "POST") return sendJson(response, { error: "Use POST" }, 405);
-    const result = await runChecks(targetNames, "http");
+    const result = requestUrl.pathname === "/run/all"
+      ? await runFullCycle("http")
+      : await runChecks(targetNames, "http");
     return sendJson(response, result, result.ok ? 200 : 502);
   }
   const result = healthResult(targetNames);
@@ -706,7 +663,6 @@ async function shutdown(signal) {
 
 validateConfig();
 await loadAlertState();
-await loadProxyState();
 
 const server = createServer((request, response) => {
   handleRequest(request, response).catch((error) => {
@@ -721,35 +677,22 @@ server.listen(config.port, config.host, () => {
     host: config.host,
     port: config.port,
     configuredProxies: proxies.length,
-    proxyIntervalMinutes: config.proxyCheckIntervalMs / 60_000,
+    proxyIntervalMinutes: config.intervalMs / 60_000,
+    failureNotificationThreshold: config.failureNotificationThreshold,
     proxyBlockNonessential: config.proxyBlockNonessential,
   });
 });
 
-const allTargets = Object.keys(monitors);
 if (config.checkOnStart) {
-  runChecks(allTargets, "startup").catch((error) =>
+  runFullCycle("startup").catch((error) =>
     log("startup_check_failed", { reason: error.message }),
   );
 }
 setInterval(() => {
-  runChecks(allTargets, "schedule").catch((error) =>
+  runFullCycle("schedule").catch((error) =>
     log("scheduled_check_failed", { reason: error.message }),
   );
 }, config.intervalMs).unref();
-
-if (proxies.length) {
-  if (config.proxyCheckOnStart) {
-    runNextProxyChecks("proxy-startup").catch((error) =>
-      log("proxy_startup_check_failed", { reason: error.message }),
-    );
-  }
-  setInterval(() => {
-    runNextProxyChecks("proxy-schedule").catch((error) =>
-      log("proxy_scheduled_check_failed", { reason: error.message }),
-    );
-  }, config.proxyCheckIntervalMs).unref();
-}
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
