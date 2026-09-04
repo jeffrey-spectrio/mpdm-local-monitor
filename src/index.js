@@ -229,13 +229,12 @@ async function sendSlack(text) {
   }
 }
 
-function cycleAlertText(cycle, recovered = false) {
+function cycleAlertText(cycle) {
   return formatCycleAlert(cycle, {
     failureThreshold: config.failureNotificationThreshold,
     labels: Object.fromEntries(
       Object.entries(monitors).map(([name, monitor]) => [name, monitor.label]),
     ),
-    recovered,
   });
 }
 
@@ -249,8 +248,7 @@ async function updateCycleAlert(cycle) {
     const sent = await sendSlack(cycleAlertText(cycle));
     if (sent) state.alertSent = true;
   } else if (!exceeded && state.alertSent) {
-    const sent = await sendSlack(cycleAlertText(cycle, true));
-    if (sent) state.alertSent = false;
+    state.alertSent = false;
   }
   await saveAlertState().catch((error) => {
     log("alert_state_save_failed", { reason: error.message });

@@ -44,27 +44,24 @@ function urlResultLines(name, cycle, labels) {
     check: result?.checks?.[name],
   }));
   const failed = checks.some(({ check }) => !check?.ok);
-  const lines = [`${labels[name] || name} login check ${failed ? "failed" : "passed"}`];
+  const lines = [`*${labels[name] || name} login check ${failed ? "failed" : "passed"}*`];
   for (const { label, check } of checks) {
-    lines.push(`${label} = ${check?.ok ? "Pass" : "Failure"}`);
-    if (!check?.ok) lines.push(`Reason: ${check?.reason || check?.status || "Unknown error"}`);
+    lines.push(`• ${label} = ${check?.ok ? "Pass" : "Failure"}`);
+    if (!check?.ok) {
+      lines.push(`  ↳ Reason: ${check?.reason || check?.status || "Unknown error"}`);
+    }
   }
   return lines;
 }
 
-export function formatCycleAlert(
-  cycle,
-  { failureThreshold, labels = {}, recovered = false },
-) {
+export function formatCycleAlert(cycle, { failureThreshold, labels = {} }) {
   const failureCount = cycleFailureCount(cycle);
-  const title = recovered
-    ? ":white_check_mark: Monitor alert recovered"
-    : ":rotating_light: Monitor failure threshold exceeded";
   const lines = [
-    title,
-    `Network failures: ${failureCount}`,
-    `Alert when failures > ${failureThreshold}`,
-    `Checked at: ${formatCheckedAt(cycle.checkedAt)}`,
+    ":rotating_light: *Monitor failure alert*",
+    "",
+    `*Network failures:* ${failureCount}`,
+    `*Alert when failures >:* ${failureThreshold}`,
+    `*Checked at:* ${formatCheckedAt(cycle.checkedAt)}`,
   ];
   const targetNames = Object.keys(cycle.direct?.checks || {});
   for (const name of targetNames) {

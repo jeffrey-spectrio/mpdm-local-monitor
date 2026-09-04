@@ -66,12 +66,14 @@ test("alert output includes direct, every proxy, and every URL result", () => {
   const text = formatCycleAlert(cycle, { failureThreshold: 3, labels });
 
   assert.match(text, /MPDM PROD login check failed/);
-  assert.match(text, /Direct = Pass/);
-  assert.match(text, /Proxy: JP-Tokyo = Failure/);
-  assert.match(text, /Reason: VPS timeout/);
-  assert.match(text, /Proxy: US-Seattle = Pass/);
+  assert.match(text, /• Direct = Pass/);
+  assert.match(text, /• Proxy: JP-Tokyo = Failure/);
+  assert.match(text, /↳ Reason: VPS timeout/);
+  assert.match(text, /• Proxy: US-Seattle = Pass/);
   assert.match(text, /MPDM DEV login check failed/);
   assert.match(text, /InReality V3 login check failed/);
   assert.match(text, /InReality V3 DEV login check failed/);
-  assert.match(text, /Checked at: 2026-09-04 16:00:00 \(UTC\+8\)/);
+  assert.match(text, /\*Checked at:\* 2026-09-04 16:00:00 \(UTC\+8\)/);
+  assert.doesNotMatch(text, /recovered/i);
+  assert.match(text, /\n\n\*MPDM PROD login check failed\*/);
 });
