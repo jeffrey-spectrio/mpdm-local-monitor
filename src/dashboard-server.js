@@ -55,10 +55,9 @@ function sendHtml(response) {
   response.writeHead(200, {
     "cache-control": "no-store",
     "content-type": "text/html; charset=utf-8",
-    "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'",
+    "content-security-policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'self' https://dashboard.auahk.com",
     "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff",
-    "x-frame-options": "DENY",
   });
   response.end(dashboardHtml);
 }
