@@ -2,7 +2,7 @@
 
 Runs real MPDM PROD, MPDM DEV, InReality Platform V3, and InReality Platform V3 DEV login checks on a local Mac. A single long-lived Chromium process is reused, and checks run sequentially to reduce startup time and memory usage.
 
-The project also includes a separate public read-only dashboard with a light Apple/iOS-style UI. The monitor itself remains bound to `127.0.0.1:8780`, while the dashboard listens on `0.0.0.0:8781` by default. This keeps the action endpoints and credentials private while allowing LAN or Cloudflare Tunnel access to status data.
+The project also includes a separate read-only dashboard with a light Apple/iOS-style UI. The monitor itself remains bound to `127.0.0.1:8780`, while the dashboard listens on `0.0.0.0:8781` by default. This keeps the action endpoints and credentials private while allowing LAN access to status data.
 
 ## Requirements
 
@@ -168,48 +168,6 @@ Logs:
 ```bash
 tail -f monitor.log
 tail -f dashboard.log
-```
-
-## Cloudflare Tunnel external access
-
-For Internet access, route only the dashboard port through Cloudflare Tunnel. Do not route the private monitor port `8780`.
-
-Install `cloudflared` on macOS:
-
-```bash
-brew install cloudflared
-```
-
-Create/login to a locally managed tunnel using Cloudflare's normal CLI flow, then copy `config/cloudflared.yml.example` to `~/.cloudflared/config.yml` and replace:
-
-- `YOUR_TUNNEL_UUID`
-- `YOUR_MAC_USER`
-- `monitor.example.com`
-
-The important origin line is:
-
-```yaml
-service: http://127.0.0.1:8781
-```
-
-Create the DNS route:
-
-```bash
-cloudflared tunnel route dns <TUNNEL-NAME-OR-UUID> monitor.example.com
-```
-
-Test the tunnel:
-
-```bash
-cloudflared tunnel run <TUNNEL-NAME-OR-UUID>
-```
-
-On macOS, `cloudflared service install` installs it as a user LaunchAgent that starts when you log in. Using `sudo cloudflared service install` installs it as a system LaunchDaemon that starts at boot. See the current Cloudflare Tunnel documentation before installation because service behavior and CLI options can change.
-
-Once configured, the dashboard can be reached externally at:
-
-```text
-https://monitor.example.com/
 ```
 
 ## Updating
