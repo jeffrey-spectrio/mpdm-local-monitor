@@ -61,10 +61,14 @@ There is no round-robin skip: every configured proxy runs on every cycle. Direct
 
 Proxy page and login waits use `PROXY_TIMEOUT_MS` (60 seconds by default); direct checks keep their existing timeouts. Increase this value if a proxy is consistently slower, for example `PROXY_TIMEOUT_MS=90000`.
 
-Slack alerts count failures separately for each URL. For example, with one direct check and four proxies and `FAILURE_NOTIFICATION_THRESHOLD=2`, three to five failures for the same URL trigger an alert; one or two failures for each URL do not. Every cycle that exceeds the threshold sends an alert. The alert is grouped by URL, each section shows its failed-network count, and each URL lists Direct plus every proxy. Failed entries include their reason, and the check timestamp is shown in UTC+8:
+Slack alerts count failures separately for each URL. For example, with one direct check and four proxies and `FAILURE_NOTIFICATION_THRESHOLD=2`, three to five failures for the same URL trigger an alert; one or two failures for each URL do not. Every cycle that exceeds the threshold sends an alert. The alert includes only the URL sections that exceeded the threshold; each included URL shows Direct plus every proxy and failed-entry reasons. The check timestamp is shown in UTC+8:
 
 ```text
-MPDM PROD login check failed
+🚨 Monitor alert
+Trigger: MPDM PROD (3/5)
+Checked: 2026-09-04 16:00:00 (UTC+8)
+
+MPDM PROD login check failed — 3/5 networks failed
 • Direct = Pass
 • Proxy: 🇯🇵 JP-Tokyo = Failure
   ↳ Reason: VPS timeout

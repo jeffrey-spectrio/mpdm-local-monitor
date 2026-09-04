@@ -75,7 +75,7 @@ test("does not alert when failures are spread below the per-URL threshold", () =
   assert.equal(isAlertThresholdExceeded(cycle, 2), false);
 });
 
-test("alert output includes direct, every proxy, and every URL result", () => {
+test("alert output includes every network result for triggering URL only", () => {
   const cycle = {
     checkedAt: "2026-09-04T08:00:00.000Z",
     direct: {
@@ -89,27 +89,39 @@ test("alert output includes direct, every proxy, and every URL result", () => {
     },
     proxyResults: [
       {
-        ...network("JP-Tokyo", false),
-        checks: Object.fromEntries(
-          Object.keys(labels).map((name) => [name, { ok: false, reason: "VPS timeout" }]),
-        ),
+        proxyLabel: "JP-Tokyo",
+        checks: {
+          prod: { ok: false, reason: "VPS timeout" },
+          dev: { ok: false, reason: "VPS timeout" },
+          app: { ok: true },
+          appDev: { ok: true },
+        },
       },
-      network("US-Seattle", true),
+      {
+        proxyLabel: "US-Seattle",
+        checks: {
+          prod: { ok: false, reason: "VPS timeout" },
+          dev: { ok: true },
+          app: { ok: true },
+          appDev: { ok: true },
+        },
+      },
       network("SG-Singapore-Oracle", true),
     ],
   };
-  const text = formatCycleAlert(cycle, { failureThreshold: 3, labels });
+  const text = formatCycleAlert(cycle, { failureThreshold: 1, labels });
 
-  assert.match(text, /MPDM PROD login check failed — 1\/4 networks failed/);
+  assert.match(text, /\*Trigger:\* MPDM PROD \(2\/4\)/);
+  assert.match(text, /MPDM PROD login check failed — 2\/4 networks failed/);
   assert.match(text, /• Direct = Pass/);
   assert.match(text, /• Proxy: 🇯🇵 JP-Tokyo = Failure/);
   assert.match(text, /↳ Reason: VPS timeout/);
-  assert.match(text, /• Proxy: 🇺🇸 US-Seattle = Pass/);
+  assert.match(text, /• Proxy: 🇺🇸 US-Seattle = Failure/);
   assert.match(text, /• Proxy: 🇸🇬 SG-Singapore-Oracle = Pass/);
-  assert.match(text, /MPDM DEV login check failed/);
-  assert.match(text, /InReality V3 login check failed/);
-  assert.match(text, /InReality V3 DEV login check failed/);
-  assert.match(text, /\*Checked at:\* 2026-09-04 16:00:00 \(UTC\+8\)/);
+  assert.doesNotMatch(text, /MPDM DEV login check/);
+  assert.doesNotMatch(text, /InReality V3 login check/);
+  assert.doesNotMatch(text, /InReality V3 DEV login check/);
+  assert.match(text, /\*Checked:\* 2026-09-04 16:00:00 \(UTC\+8\)/);
   assert.doesNotMatch(text, /recovered/i);
-  assert.match(text, /\n\n\*MPDM PROD login check failed — 1\/4 networks failed\*/);
+  assert.match(text, /\n\n\*MPDM PROD login check failed — 2\/4 networks failed\*/);
 });

@@ -100,15 +100,15 @@ export function formatCycleAlert(cycle, { failureThreshold, labels = {} }) {
   const triggeredTargets = Object.entries(failureCounts)
     .filter(([, count]) => count > failureThreshold)
     .map(([name, count]) => `${labels[name] || name} (${count}/${networks.length})`);
+  const triggeredTargetNames = Object.keys(failureCounts).filter(
+    (name) => failureCounts[name] > failureThreshold,
+  );
   const lines = [
-    ":rotating_light: *Monitor failure alert*",
-    "",
-    `*Alert rule:* any URL with more than ${failureThreshold} failed networks`,
-    `*Triggered by:* ${triggeredTargets.join(", ") || "none"}`,
-    `*Checked at:* ${formatCheckedAt(cycle.checkedAt)}`,
+    ":rotating_light: *Monitor alert*",
+    `*Trigger:* ${triggeredTargets.join(", ") || "none"}`,
+    `*Checked:* ${formatCheckedAt(cycle.checkedAt)}`,
   ];
-  const targetNames = Object.keys(cycle.direct?.checks || {});
-  for (const name of targetNames) {
+  for (const name of triggeredTargetNames) {
     lines.push("", ...urlResultLines(name, cycle, labels));
   }
   return lines.join("\n");
