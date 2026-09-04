@@ -42,16 +42,20 @@ Proxy monitoring runs in the same full cycle as direct monitoring. Every configu
 Add the following to `.env`:
 
 ```dotenv
-PROXY_URL=http://your-vps-proxy.example.com:8000
-PROXY_USERNAME=your-vps-proxy-username
-PROXY_PASSWORD=your-vps-proxy-password
-# Use PROXY_LIST instead of PROXY_URL for multiple VPS proxies.
-# PROXY_LIST=JP-Tokyo=http://proxy1.example.com:8000;UK-London=http://proxy2.example.com:8000;US-Seattle=http://proxy3.example.com:8000
+# Single proxy (use this only when credentials are shared):
+# PROXY_URL=http://your-vps-proxy.example.com:8000
+# PROXY_USERNAME=your-vps-proxy-username
+# PROXY_PASSWORD=your-vps-proxy-password
+# Multiple proxies with different credentials. URL-encode special characters.
+PROXY_LIST=JP-Tokyo=http://tokyo-user:tokyo%40password@proxy1.example.com:8000;UK-London=http://london-user:london%23password@proxy2.example.com:8000;US-Seattle=http://seattle-user:seattle%40password@proxy3.example.com:8000
+# Optional global fallback for list entries without username:password@ in the URL.
+# PROXY_USERNAME=your-fallback-username
+# PROXY_PASSWORD=your-fallback-password
 # Keep false to use the same page-loading behavior as direct checks.
 PROXY_BLOCK_NONESSENTIAL=false
 ```
 
-Set `PROXY_URL` to the HTTP/SOCKS proxy listener on your VPS. `PROXY_USERNAME` and `PROXY_PASSWORD` are optional and should stay only in `.env`. For multiple VPS proxies, use `PROXY_LIST`; entries can be plain `host:port` values or `Label=host:port`, separated with semicolons or commas.
+Set `PROXY_URL` for one proxy, or set `PROXY_LIST` for multiple proxies. Each `PROXY_LIST` entry can contain its own credentials in standard URL form: `Label=http://username:password@host:port`. URL-encode special characters in credentials (`@` → `%40`, `#` → `%23`, etc.). Global `PROXY_USERNAME` and `PROXY_PASSWORD` are only fallbacks for entries without embedded credentials, and all secrets must stay in `.env`.
 
 There is no round-robin skip: every configured proxy runs on every cycle. No extra IP lookup is performed, which keeps proxy execution close to direct execution. Proxy server credentials are redacted from returned results and logs.
 

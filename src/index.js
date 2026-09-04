@@ -8,6 +8,7 @@ import {
   formatCycleAlert,
   isAlertThresholdExceeded,
 } from "./alert-format.js";
+import { parseProxyList as parseProxyListWithCredentials } from "./proxy-config.js";
 
 const JSON_HEADERS = {
   "cache-control": "no-store",
@@ -71,7 +72,7 @@ const proxyListValue =
   process.env.PROXY_URL
     ? `VPS=${process.env.PROXY_URL}`
     : process.env.PROXY_LIST || "";
-const proxies = parseProxyList(proxyListValue);
+const proxies = parseProxyListWithCredentials(proxyListValue);
 const PROXY_BLOCKED_RESOURCE_TYPES = new Set(["image", "media", "font", "stylesheet"]);
 const PROXY_BLOCKED_HOSTNAMES = new Set([
   "www.googletagmanager.com",
@@ -263,11 +264,13 @@ async function getBrowser() {
 
 function contextOptionsFor(proxy) {
   if (!proxy) return {};
+  const username = proxy.username ?? config.proxyUsername;
+  const password = proxy.password ?? config.proxyPassword;
   return {
     proxy: {
       server: proxy.server,
-      ...(config.proxyUsername ? { username: config.proxyUsername } : {}),
-      ...(config.proxyPassword ? { password: config.proxyPassword } : {}),
+      ...(username ? { username } : {}),
+      ...(password ? { password } : {}),
     },
   };
 }
