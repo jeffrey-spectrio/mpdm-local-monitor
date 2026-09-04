@@ -29,11 +29,11 @@ Direct checks run at startup and every 15 minutes by default.
 To receive Slack alerts, create a Slack incoming webhook and set it in `.env`:
 
 ```dotenv
-FAILURE_NOTIFICATION_THRESHOLD=3
+FAILURE_NOTIFICATION_THRESHOLD=2
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 ```
 
-Each full monitoring cycle runs the direct network and every configured proxy. Each network tests all four URLs. `FAILURE_NOTIFICATION_THRESHOLD` is the number of failed networks allowed before alerting: with `3`, four or more failures send an alert, while two failures are treated as below threshold and do not send one. A recovery message is sent when a later cycle returns to the threshold or below. Alert state survives service restarts.
+Each full monitoring cycle runs the direct network and every configured proxy. Each network tests all four URLs. `FAILURE_NOTIFICATION_THRESHOLD` is the number of failed networks allowed before alerting: with `2`, three or more failures send an alert, while two or fewer failures do not. Every cycle above the threshold sends an alert; recovery does not send a separate message.
 
 ## Proxy monitoring
 
@@ -61,7 +61,7 @@ There is no round-robin skip: every configured proxy runs on every cycle. No ext
 
 Proxy page and login waits use `PROXY_TIMEOUT_MS` (60 seconds by default); direct checks keep their existing timeouts. Increase this value if a proxy is consistently slower, for example `PROXY_TIMEOUT_MS=90000`.
 
-Slack alerts use the combined network failure count. For example, with one direct check and four proxies and `FAILURE_NOTIFICATION_THRESHOLD=3`, four or five failed networks trigger an alert; one to three failed networks do not. The alert is grouped by URL, and each URL lists Direct plus every proxy. Failed entries include their reason, and the check timestamp is shown in UTC+8:
+Slack alerts use the combined network failure count. For example, with one direct check and four proxies and `FAILURE_NOTIFICATION_THRESHOLD=2`, three to five failed networks trigger an alert; zero to two failed networks do not. Every cycle that exceeds the threshold sends an alert. The alert is grouped by URL, and each URL lists Direct plus every proxy. Failed entries include their reason, and the check timestamp is shown in UTC+8:
 
 ```text
 MPDM PROD login check failed

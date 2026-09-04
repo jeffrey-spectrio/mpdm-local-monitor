@@ -1,7 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { dirname } from "node:path";
 import { chromium } from "playwright";
 import {
   cycleFailureCount,
@@ -58,11 +56,10 @@ const config = {
   checkOnStart: process.env.CHECK_ON_START !== "false",
   headless: process.env.HEADLESS !== "false",
   failureNotificationThreshold: Number.parseInt(
-    process.env.FAILURE_NOTIFICATION_THRESHOLD || "3",
+    process.env.FAILURE_NOTIFICATION_THRESHOLD || "2",
     10,
   ),
   slackWebhookUrl: process.env.SLACK_WEBHOOK_URL || "",
-  alertStatePath: process.env.ALERT_STATE_PATH || "data/alert-state.json",
   proxyUsername: process.env.PROXY_USERNAME || "",
   proxyPassword: process.env.PROXY_PASSWORD || "",
   proxyTimeoutMs: Number.parseInt(process.env.PROXY_TIMEOUT_MS || "60000", 10),
@@ -127,7 +124,6 @@ let browser;
 let checkQueue = Promise.resolve();
 const latest = Object.fromEntries(Object.keys(monitors).map((name) => [name, null]));
 let latestProxyCycle = null;
-let alertState = { aggregate: { alertSent: false } };
 
 function elapsedSince(startedAt) {
   return Date.now() - startedAt;
@@ -192,22 +188,6 @@ function validateConfig() {
   }
 }
 
-async function loadAlertState() {
-  try {
-    const stored = JSON.parse(await readFile(config.alertStatePath, "utf8"));
-    if (stored.aggregate && typeof stored.aggregate === "object") {
-      alertState.aggregate = { ...alertState.aggregate, ...stored.aggregate };
-    }
-  } catch (error) {
-    if (error.code !== "ENOENT") log("alert_state_load_failed", { reason: error.message });
-  }
-}
-
-async function saveAlertState() {
-  await mkdir(dirname(config.alertStatePath), { recursive: true });
-  await writeFile(config.alertStatePath, `${JSON.stringify(alertState, null, 2)}\n`);
-}
-
 async function sendSlack(text) {
   if (!config.slackWebhookUrl) {
     log("slack_notification_skipped", { reason: "SLACK_WEBHOOK_URL is not configured" });
@@ -239,20 +219,9 @@ function cycleAlertText(cycle) {
 }
 
 async function updateCycleAlert(cycle) {
-  const state = alertState.aggregate;
-  const exceeded = isAlertThresholdExceeded(
-    cycle,
-    config.failureNotificationThreshold,
-  );
-  if (exceeded && !state.alertSent) {
-    const sent = await sendSlack(cycleAlertText(cycle));
-    if (sent) state.alertSent = true;
-  } else if (!exceeded && state.alertSent) {
-    state.alertSent = false;
+  if (isAlertThresholdExceeded(cycle, config.failureNotificationThreshold)) {
+    await sendSlack(cycleAlertText(cycle));
   }
-  await saveAlertState().catch((error) => {
-    log("alert_state_save_failed", { reason: error.message });
-  });
 }
 
 async function getBrowser() {
@@ -671,7 +640,6 @@ async function shutdown(signal) {
 }
 
 validateConfig();
-await loadAlertState();
 
 const server = createServer((request, response) => {
   handleRequest(request, response).catch((error) => {
