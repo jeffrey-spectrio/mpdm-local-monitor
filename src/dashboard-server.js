@@ -16,8 +16,8 @@ function configuredProxyCount() {
 
 const config = {
   host: process.env.DASHBOARD_HOST || "0.0.0.0",
-  port: Number.parseInt(process.env.DASHBOARD_PORT || "8788", 10),
-  monitorUrl: process.env.DASHBOARD_MONITOR_URL || "http://127.0.0.1:8787",
+  port: Number.parseInt(process.env.DASHBOARD_PORT || "8781", 10),
+  monitorUrl: process.env.DASHBOARD_MONITOR_URL || "http://127.0.0.1:8780",
   monitorToken: process.env.MONITOR_TOKEN || "",
   monitorLogPath: process.env.DASHBOARD_MONITOR_LOG_PATH || "monitor.log",
   historyPath: process.env.DASHBOARD_HISTORY_PATH || "data/dashboard-history.json",

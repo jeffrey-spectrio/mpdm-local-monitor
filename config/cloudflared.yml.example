@@ -3,5 +3,5 @@ credentials-file: /Users/YOUR_MAC_USER/.cloudflared/YOUR_TUNNEL_UUID.json
 
 ingress:
   - hostname: monitor.example.com
-    service: http://127.0.0.1:8788
+    service: http://127.0.0.1:8781
   - service: http_status:404

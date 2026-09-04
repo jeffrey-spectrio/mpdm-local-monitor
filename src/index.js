@@ -52,7 +52,7 @@ function parseProxyList(value) {
 
 const config = {
   host: process.env.HOST || "127.0.0.1",
-  port: Number.parseInt(process.env.PORT || "8700", 10),
+  port: Number.parseInt(process.env.PORT || "8780", 10),
   token: process.env.MONITOR_TOKEN || "",
   intervalMs: Number.parseFloat(process.env.CHECK_INTERVAL_MINUTES || "15") * 60_000,
   checkOnStart: process.env.CHECK_ON_START !== "false",
