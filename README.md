@@ -65,15 +65,15 @@ Slack alerts use the combined network failure count. For example, with one direc
 
 ```text
 MPDM PROD login check failed
-Direct = Pass
-Proxy: JP-Tokyo = Failure
-Reason: VPS timeout
-Proxy: US-Seattle = Pass
+• Direct = Pass
+• Proxy: 🇯🇵 JP-Tokyo = Failure
+  ↳ Reason: VPS timeout
+• Proxy: 🇺🇸 US-Seattle = Pass
 
 MPDM DEV login check passed
-Direct = Pass
-Proxy: JP-Tokyo = Pass
-Proxy: US-Seattle = Pass
+• Direct = Pass
+• Proxy: 🇯🇵 JP-Tokyo = Pass
+• Proxy: 🇺🇸 US-Seattle = Pass
 ```
 
 ## Monitor endpoints

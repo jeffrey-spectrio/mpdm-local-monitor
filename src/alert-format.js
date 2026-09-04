@@ -37,6 +37,22 @@ function formatCheckedAt(value) {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second} (UTC+8)`;
 }
 
+const proxyFlags = {
+  US: "🇺🇸",
+  JP: "🇯🇵",
+  UK: "🇬🇧",
+  SG: "🇸🇬",
+  ES: "🇪🇸",
+  PL: "🇵🇱",
+};
+
+function formatNetworkLabel(label) {
+  if (!label.startsWith("Proxy: ")) return label;
+  const proxyLabel = label.slice("Proxy: ".length);
+  const countryCode = proxyLabel.split("-")[0].toUpperCase();
+  return `Proxy: ${proxyFlags[countryCode] || "🌐"} ${proxyLabel}`;
+}
+
 function urlResultLines(name, cycle, labels) {
   const networks = networkResultsForCycle(cycle);
   const checks = networks.map(({ label, result }) => ({
@@ -46,7 +62,7 @@ function urlResultLines(name, cycle, labels) {
   const failed = checks.some(({ check }) => !check?.ok);
   const lines = [`*${labels[name] || name} login check ${failed ? "failed" : "passed"}*`];
   for (const { label, check } of checks) {
-    lines.push(`• ${label} = ${check?.ok ? "Pass" : "Failure"}`);
+    lines.push(`• ${formatNetworkLabel(label)} = ${check?.ok ? "Pass" : "Failure"}`);
     if (!check?.ok) {
       lines.push(`  ↳ Reason: ${check?.reason || check?.status || "Unknown error"}`);
     }
